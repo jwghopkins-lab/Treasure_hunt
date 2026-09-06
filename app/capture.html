@@ -48,16 +48,12 @@
   body { background: var(--paper); color: var(--ink);
          font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
          display: flex; flex-direction: column; align-items: center; }
-  /* One column, the height of the screen: the wordmark, the two boxes, the
-     camera taking whatever is left, the shutter. Nothing scrolls. */
+  /* One column, the height of the screen: the two boxes, the camera taking
+     whatever is left, the shutter and the count. Nothing scrolls, and nothing
+     on the page is a word but the two placeholders. */
   .screen { width: 100%; max-width: 560px; display: flex; flex-direction: column;
             height: 100dvh; padding: 8px 0 calc(12px + env(safe-area-inset-bottom)); }
   [hidden] { display: none !important; }
-  header { display: flex; align-items: center; gap: 10px; padding: 6px 14px; }
-  .wordmark { font-family: Georgia, "Times New Roman", serif; font-weight: 700;
-              font-size: .92rem; letter-spacing: .08em; line-height: 1.2; }
-  .wordmark span { color: var(--accent); }
-
   .boxes { display: flex; flex-direction: column; gap: 8px; padding: 4px 12px 10px; }
   .boxes input { width: 100%; font-size: 16px; padding: 11px 12px; border-radius: 10px;
                  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
@@ -102,7 +98,6 @@
 </head>
 <body>
 <div class="screen">
-  <header><div class="wordmark">TREASURE <span>HUNT</span></div></header>
   <div class="boxes">
     <input id="hunt" type="text" placeholder="hunt" maxlength="40" autocapitalize="off"
            autocorrect="off" spellcheck="false" autocomplete="off" enterkeyhint="done">

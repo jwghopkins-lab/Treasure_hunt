@@ -1,15 +1,11 @@
 {
-  "name": "tests",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "treasure-hunt-tests",
+  "private": true,
+  "description": "Playwright suites for the Treasure Hunt app; run from this directory with npx playwright test",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "playwright test"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "@playwright/test": "^1.56.1"
+    "@playwright/test": "1.56.1"
   }
 }

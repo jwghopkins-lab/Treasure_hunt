@@ -108,6 +108,19 @@ photograph. `Lens.fakeScore(v)` paints the bar as if the smoothed score were
 To try the built site on a phone use the Pages URL: the camera needs a
 secure context, and a file path is not one.
 
+## What changed from architect-order
+
+The scorer is architect-order's with two changes. The working frame is the
+video's rendered rectangle rather than the screen, since the video is
+letterboxed here and the stencil is placed inside it; and the box blur in
+`edgeMap` clamps at the frame's border instead of leaving it at zero. The
+zero border made the Sobel see a bright line all the way round the frame,
+in every stencil and in every live frame alike, and a line that is always
+there is a match for free: with the stencil filling the rectangle, a blank
+wall passed. `stencil.py` computes the same blur, so a stencil is still
+exactly the edges the camera will see. The search is wider, ±5 px and ±10%,
+still 27 evaluations.
+
 ## The pass rule
 
 The smoothed score is evaluated every 250 ms. The stencil passes when any

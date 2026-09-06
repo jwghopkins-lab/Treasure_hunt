@@ -79,8 +79,7 @@
   /* The thumbnails: three to a row, square, the stencil on a dark ground. */
   #grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding-top: 12px; }
   .tile { aspect-ratio: 1; width: 100%; background: #141617; border: 2px solid var(--line);
-          border-radius: 12px; padding: 6%; cursor: pointer; overflow: hidden;
-          display: block; }
+          border-radius: 12px; padding: 6%; cursor: pointer; display: block; }
   .tile img { display: block; width: 100%; height: 100%; object-fit: contain;
               pointer-events: none; }
   .tile.started { border: 3px solid var(--amber); }
@@ -668,6 +667,10 @@ function paintMarkers() {
       radius: 10, color: "#fff", weight: 2, fillColor: markerColour(s), fillOpacity: 1,
     }).addTo(MAP);
     m.bindPopup(popupFor(s), { closeButton: false, minWidth: 140 });
+    // A marker is not a button, so the capture-phase tick does not see it:
+    // an ordinary tap's vibration here, inside the tap. (iPhone's switch
+    // cannot be stretched over a marker; the ? tiles are buttons and tick.)
+    m.on("click", () => { lastTick = haptic(false); });
     m.stencilId = s.id;
     mapBits.markers.push(m);
   }
