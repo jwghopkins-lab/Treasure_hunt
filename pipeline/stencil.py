@@ -2,7 +2,7 @@
 """Cut a stencil from a photograph.
 
     python3 pipeline/stencil.py photos/<slug>/*.jpg \\
-        --keep 0.06 --speck 60 --long 800 --out app/img/<slug>
+        --keep 0.066 --speck 60 --long 800 --out app/img/<slug>
 
 Not part of the build, and the one thing in pipeline/ that needs an install:
 Pillow, to read the photograph and write the PNG. No numpy. The build only
@@ -253,8 +253,11 @@ def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Cut stencils from photographs for a treasure hunt.")
     ap.add_argument("photos", nargs="+", type=Path, help="the photographs")
-    ap.add_argument("--keep", type=float, default=0.06,
-                    help="fraction of the frame's interior to keep (default 0.06)")
+    # 0.066 rather than the handoff's 0.06: a tenth more of the scene's edges,
+    # after the first hunt showed the stencils needed more of their surroundings
+    # to say where to stand.
+    ap.add_argument("--keep", type=float, default=0.066,
+                    help="fraction of the frame's interior to keep (default 0.066)")
     ap.add_argument("--speck", type=int, default=60,
                     help="drop blobs with fewer pixels than this (default 60)")
     ap.add_argument("--long", type=int, default=800,

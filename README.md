@@ -62,7 +62,7 @@ the Supabase connector:
 Download each `path` from the bucket's public URL to `photos/<slug>/<id>.jpg`,
 take the clue and, where the accuracy is at most 75 m, the position. Then:
 
-    python3 pipeline/stencil.py photos/<slug>/*.jpg --keep 0.06 --speck 60 --long 800 --out app/img/<slug>
+    python3 pipeline/stencil.py photos/<slug>/*.jpg --keep 0.066 --speck 60 --long 800 --out app/img/<slug>
 
 Look at every `*-stencil-preview.jpg`. A photo with too much texture
 (foliage, gravel, brick) gives a stencil that is noise: raise `--speck`,
@@ -118,15 +118,18 @@ zero border made the Sobel see a bright line all the way round the frame,
 in every stencil and in every live frame alike, and a line that is always
 there is a match for free: with the stencil filling the rectangle, a blank
 wall passed. `stencil.py` computes the same blur, so a stencil is still
-exactly the edges the camera will see. The search is wider, ±5 px and ±10%,
-still 27 evaluations.
+exactly the edges the camera will see. The search is wider, ±5 px and five
+scales from 0.85 to 1.15, 45 evaluations, because photographs from the
+camera app lean on the scale search and the first hunt showed ±10% was
+tight.
 
 ## The pass rule
 
 The smoothed score is evaluated every 250 ms. The stencil passes when any
-one of these has held, continuously, on consecutive evaluations: 0.35 for
-0.6 s, 0.30 for 1.0 s, or 0.25 for 2.0 s. Each line keeps its own timer. The
-bar at the top is the smoothed score against the 0.35 line, so a pass that
+one of these has held, continuously, on consecutive evaluations: 0.30 for
+0.6 s, 0.25 for 1.0 s, or 0.20 for 2.0 s (each 0.05 under the handoff's
+lines, after the first hunt was walked). Each line keeps its own timer. The
+bar at the top is the smoothed score against the 0.30 line, so a pass that
 comes from a lower line is seen with the bar part of the way across. There
 is nothing to press to complete a stencil.
 

@@ -112,15 +112,15 @@ test.describe("the camera screen", () => {
     expect(after).toEqual(before);
   });
 
-  test("the bar: 0.175 fills half the width, 0.35 and above fills all of it", async ({ page }) => {
+  test("the bar: 0.15 fills half the width, 0.30 and above fills all of it", async ({ page }) => {
     await page.goto("fixture/");
     await openTile(page, withClue.id);
-    await page.evaluate(() => window.Lens.fakeScore(0.175));
+    await page.evaluate(() => window.Lens.fakeScore(0.15));
     await expect(page.locator("#matchfill")).toHaveAttribute("style", /width: 50%/);
     const bar = await page.locator("#matchbar").boundingBox();
     // The fill eases over 200 ms; wait for it to land.
     await expect.poll(async () => (await page.locator("#matchfill").boundingBox()).width).toBeCloseTo(bar.width / 2, 0);
-    await page.evaluate(() => window.Lens.fakeScore(0.35));
+    await page.evaluate(() => window.Lens.fakeScore(0.30));
     await expect(page.locator("#matchfill")).toHaveAttribute("style", /width: 100%/);
     await page.evaluate(() => window.Lens.fakeScore(0.9));
     await expect(page.locator("#matchfill")).toHaveAttribute("style", /width: 100%/);

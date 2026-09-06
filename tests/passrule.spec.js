@@ -1,5 +1,5 @@
 // The three timers, on passRule with made-up sequences at 250 ms steps, the
-// first evaluation at 0 ms.
+// first evaluation at 0 ms. The lines are 0.30, 0.25 and 0.20.
 const { test, expect } = require("@playwright/test");
 const { prepare, withName, stubBoard } = require("./helpers");
 
@@ -25,33 +25,33 @@ test.describe("the pass rule", () => {
     await expect(page.locator("#s-main")).toBeVisible();
   });
 
-  test("0.36 passes on the fourth evaluation (750 ms) and not the third", async ({ page }) => {
-    expect(await firstPass(page, 0.36, 20)).toBe(3);
+  test("0.31 passes on the fourth evaluation (750 ms) and not the third", async ({ page }) => {
+    expect(await firstPass(page, 0.31, 20)).toBe(3);
   });
-  test("0.31 passes on the fifth evaluation (1000 ms) and not the fourth", async ({ page }) => {
-    expect(await firstPass(page, 0.31, 20)).toBe(4);
+  test("0.26 passes on the fifth evaluation (1000 ms) and not the fourth", async ({ page }) => {
+    expect(await firstPass(page, 0.26, 20)).toBe(4);
   });
-  test("0.26 passes on the ninth evaluation (2000 ms) and not the eighth", async ({ page }) => {
-    expect(await firstPass(page, 0.26, 20)).toBe(8);
+  test("0.21 passes on the ninth evaluation (2000 ms) and not the eighth", async ({ page }) => {
+    expect(await firstPass(page, 0.21, 20)).toBe(8);
   });
-  test("0.24 never passes", async ({ page }) => {
-    expect(await firstPass(page, 0.24, 400)).toBe(-1);
+  test("0.19 never passes", async ({ page }) => {
+    expect(await firstPass(page, 0.19, 400)).toBe(-1);
   });
   test("a single dip below a line resets that line's timer and no other", async ({ page }) => {
     const out = await page.evaluate(() => {
-      const seq = [0.36, 0.36, 0.31, 0.36, 0.36];
+      const seq = [0.31, 0.31, 0.26, 0.31, 0.31];
       let st = null;
       const trace = [];
       seq.forEach((s, i) => { st = window.Lens.passRule(st, s, i * 250); trace.push({ since: st.since.slice(), passed: st.passed }); });
       return trace;
     });
-    // At 500 ms the score dipped under 0.35: that timer is cleared, the
-    // 0.30 and 0.25 timers keep their start at 0.
+    // At 500 ms the score dipped under 0.30: that timer is cleared, the
+    // 0.25 and 0.20 timers keep their start at 0.
     expect(out[1]).toEqual({ since: [0, 0, 0], passed: false });
     expect(out[2]).toEqual({ since: [null, 0, 0], passed: false });
     expect(out[3]).toEqual({ since: [750, 0, 0], passed: false });
-    // At 1000 ms the 0.30 line has held for a second, so it passes, while
-    // the restarted 0.35 timer has only 250 ms on it.
+    // At 1000 ms the 0.25 line has held for a second, so it passes, while
+    // the restarted 0.30 timer has only 250 ms on it.
     expect(out[4]).toEqual({ since: [750, 0, 0], passed: true });
   });
   test("is pure: the state handed in is not changed", async ({ page }) => {

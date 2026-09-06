@@ -39,13 +39,17 @@ test.describe("the capture page", () => {
     await expect(slug).toBeVisible();
     await expect(clue).toBeVisible();
     const shutter = page.locator("#shutter");
-    await expect(shutter).toBeDisabled();
+    await expect(shutter).toBeEnabled();
     await expect(page.locator("#count")).toHaveText("0");
+    // A tap with no hunt typed says so, in the red flash, and takes nothing.
+    await shutter.click();
+    await expect(page.locator("#flash")).toContainText("hunt");
+    await expect(page.locator("#count")).toHaveText("0");
+    await page.waitForTimeout(3600);
     // No words but the placeholders.
     const words = await page.evaluate(() => document.body.innerText.replace(/\s+/g, " ").trim());
     expect(words.replace(/Treasure\s*Hunt/i, "").replace("0", "").trim()).toBe("");
     await slug.fill("Trafalgar");
-    await expect(shutter).toBeEnabled();
     await clue.fill("Between the fountains, looking north.");
     await page.waitForFunction(() => { const v = document.querySelector("video"); return v && v.videoWidth > 0; });
     await shutter.click();

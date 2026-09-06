@@ -3,8 +3,6 @@
   "name": "Snowman House",
   "test_mode": false,
   "stencils": [
-    {"id": "cellar", "src": "img/snowman-house/cellar-stencil.png"},
-    {"id": "basket", "src": "img/snowman-house/basket-stencil.png"},
     {"id": "piano", "src": "img/snowman-house/piano-stencil.png"},
     {"id": "guitar", "src": "img/snowman-house/guitar-stencil.png"},
     {"id": "lantern", "src": "img/snowman-house/lantern-stencil.png"},

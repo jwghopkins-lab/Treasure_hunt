@@ -25,14 +25,17 @@
   const MATCH_EVERY_MS = 250;
   const MATCH_ALPHA = 0.3;          // exponential smoothing of the score
   const MATCH_SHIFTS = [-5, 0, 5];  // working-resolution pixels
-  const MATCH_SCALES = [0.9, 1, 1.1];
+  // Five scales, ±15%: photographs taken with the camera app rather than the
+  // capture page lean on this, and the first hunt showed ±10% was tight.
+  const MATCH_SCALES = [0.85, 0.925, 1, 1.075, 1.15];
   const WORK_PX = 320;              // longest side of the working frame
   const WORK_PX_SLOW = 240;         // and where it drops to if a phone cannot keep up
   const SLOW_MS = 10;
   // The pass rule (section 7 of the handoff): a score held at a line for long
   // enough, on consecutive evaluations. Three lines, each with its own timer.
-  const PASS_LINES = [[0.35, 600], [0.30, 1000], [0.25, 2000]];
-  const BAR_FULL = 0.35;            // the score at which the bar is all the way across
+  // Each line is 0.05 under the handoff's, after the first hunt was walked.
+  const PASS_LINES = [[0.30, 600], [0.25, 1000], [0.20, 2000]];
+  const BAR_FULL = 0.30;            // the score at which the bar is all the way across
   const COMPLETE_MS = 1500;         // how long Complete! stays before the screen closes itself
 
   let root = null;        // the full-screen container, built once and reused
@@ -66,8 +69,11 @@
     #lens.on { display: block; }
     #lensfeed { position: absolute; inset: 0; width: 100%; height: 100%;
                 object-fit: contain; background: #000; }
+    /* A dark halo round the lines, so they read on a bright wall as well as
+       a dark one. Display only: the scorer reads the PNG, not the screen. */
     #lensstencil { position: absolute; left: 0; top: 0; display: block;
-                   pointer-events: none; }
+                   pointer-events: none;
+                   filter: drop-shadow(0 0 1.5px rgba(0,0,0,.95)) drop-shadow(0 0 1px rgba(0,0,0,.7)); }
     /* The bar at the very top, the full width. Green, always. */
     #matchbar { position: absolute; left: 0; right: 0; top: env(safe-area-inset-top, 0px);
                 height: 8px; background: rgba(255,255,255,.18); z-index: 3; }
@@ -559,8 +565,8 @@
     return cnt ? sum / cnt : 0;
   }
 
-  // The bar's fill is the smoothed score against the 0.35 line: the full
-  // width is a pass on that line, and a pass that comes from the 0.30 or 0.25
+  // The bar's fill is the smoothed score against the top line: the full
+  // width is a pass on that line, and a pass that comes from a lower line's
   // timer is seen with the bar part of the way across. No numbers.
   function paintBar() {
     if (!root) return;

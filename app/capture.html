@@ -106,7 +106,7 @@
   </div>
   <div id="stage"><video id="feed" autoplay playsinline muted></video></div>
   <div class="controls">
-    <button id="shutter" type="button" aria-label="Shutter" disabled></button>
+    <button id="shutter" type="button" aria-label="Shutter"></button>
     <div id="count">0</div>
   </div>
 </div>
@@ -219,7 +219,7 @@ function flash(ok, msg) {
     // The words go once the fade has finished, so a message that has faded is
     // not on the page any more.
     flash._t = setTimeout(() => { f.textContent = ""; }, 500);
-  }, ok ? 350 : 3000);
+  }, ok ? 600 : 3000);
 }
 
 /* ---- the shot ----
@@ -304,12 +304,16 @@ function download(slug, blob) {
 
 let busy = false;        // a shot in flight; the shutter is off until it lands
 let shots = 0;
+// The shutter stays live with the hunt box empty, so a tap on it can say
+// what is missing rather than do nothing: a greyed button on a phone in the
+// field reads as broken.
 function refresh() {
-  $("shutter").disabled = busy || !cleanSlug($("hunt").value);
+  $("shutter").disabled = busy;
 }
 async function shoot() {
   const slug = cleanSlug($("hunt").value);
-  if (busy || !slug) return;
+  if (busy) return;
+  if (!slug) { flash(false, "Type the hunt's name in the box first."); return; }
   busy = true;
   refresh();
   try {
