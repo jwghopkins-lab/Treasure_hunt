@@ -1,0 +1,18 @@
+site/
+__pycache__/
+.DS_Store
+
+# The photographs give the answers away and the repository is public because
+# Pages is. Only the checked-in sample under photos/fixture/ is committed.
+photos/*
+!photos/fixture/
+
+tests/node_modules/
+tests/.site/
+tests/.y4m/
+tests/test-results/
+tests/playwright-report/
+
+# The previews are documentation for the session that made the stencils, to
+# look at and tune by. They are not shipped and not committed.
+app/img/**/*-stencil-preview.jpg

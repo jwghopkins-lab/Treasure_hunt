@@ -1,0 +1,76 @@
+name: pages
+
+# Every hunt in content/ is published, each at /<slug>/ where the slug is its
+# file's stem, with the root page listing them and the capture page at
+# /capture/. Nothing in this file is edited to add a hunt: commit
+# content/<slug>.json and its stencils and push. content/supabase.json, when
+# it exists, is committed too, so the build bakes it in without being told.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # The build is standard library; Pillow is for test_stencil.py alone.
+      - name: Install Pillow for the stencil tests
+        run: pip install Pillow
+      - name: Unit tests, before anything is built
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Build every hunt, the root page and the capture page
+        run: |
+          set -e
+          # nullglob so a repository with no hunt yet still gets its root page
+          # and the capture page, which is how the first photographs are taken.
+          shopt -s nullglob
+          hunts=()
+          for f in content/*.json; do
+            [ "$f" = content/supabase.json ] && continue
+            python3 pipeline/build.py "$f" "site/$(basename "$f" .json)"
+            hunts+=("$f")
+          done
+          python3 pipeline/build.py --index site/index.html "${hunts[@]}"
+          python3 pipeline/build.py --capture site/capture
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
+      - name: Verify the DEPLOYED urls, not the local build
+        run: |
+          set -e
+          sleep 10
+          base="${{ steps.deployment.outputs.page_url }}"
+          curl -sSf "$base" -o /dev/null
+          echo "live: $base"
+          curl -sSf "${base}capture/" -o /dev/null
+          echo "capture: ${base}capture/"
+          shopt -s nullglob
+          for f in content/*.json; do
+            [ "$f" = content/supabase.json ] && continue
+            slug="$(basename "$f" .json)"
+            curl -sSf "${base}${slug}/" -o /dev/null
+            echo "${slug}: ${base}${slug}/"
+          done

@@ -1,0 +1,823 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Treasure Hunt</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- LEAFLET GOES HERE -->
+<style>
+  /* Palette carried over from architect-order. Portland stone for the ground,
+     cast iron for the ink, the oxide red of Roman tile courses for the accent,
+     and one more token, amber, for a stencil that was started and left.
+
+     Three theme states, not two. An explicit choice stamps data-theme on the
+     root; the default setting stamps nothing and only prefers-color-scheme
+     separates light from dark. So the bare :root carries the whole light
+     palette, the media query redefines tokens for the unstamped dark case, and
+     the [data-theme] blocks let a deliberate choice win in either direction.
+     Every component reads tokens, never a literal, or it renders one theme's
+     text on the other theme's ground. The one literal is the tiles' ground,
+     which stays dark in both themes because the orange needs it. */
+  :root {
+    --paper: #ECEBE7; --panel: #FAFAF8; --ink: #191B1C; --ink-soft: #5C6163;
+    --line: #CFCFC8; --accent: #9E2B25; --accent-soft: #F0DEDB;
+    --accent-ink: #FFFFFF;
+    --good: #2F6B4F; --good-soft: #DCE9E2;
+    --amber: #C08A1E;
+    --key: #E0E0DA; --key-ink: #191B1C; --shadow: 0 1px 3px rgba(25,27,28,.13);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #141617; --panel: #1D2022; --ink: #E8E7E3; --ink-soft: #9AA0A2;
+      --line: #363B3D; --accent: #E08078; --accent-soft: #3A2220;
+      --accent-ink: #141617;
+      --good: #6FBF97; --good-soft: #1E3229;
+      --amber: #E3B341;
+      --key: #2A2E30; --key-ink: #E8E7E3; --shadow: 0 1px 3px rgba(0,0,0,.45);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #141617; --panel: #1D2022; --ink: #E8E7E3; --ink-soft: #9AA0A2;
+    --line: #363B3D; --accent: #E08078; --accent-soft: #3A2220;
+    --accent-ink: #141617;
+    --good: #6FBF97; --good-soft: #1E3229;
+    --amber: #E3B341;
+    --key: #2A2E30; --key-ink: #E8E7E3; --shadow: 0 1px 3px rgba(0,0,0,.45);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body { background: var(--paper); color: var(--ink);
+         font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         display: flex; flex-direction: column; align-items: center; }
+  .screen { width: 100%; max-width: 560px; display: none; flex-direction: column;
+            min-height: 100dvh; padding: 8px 12px calc(20px + env(safe-area-inset-bottom)); }
+  .screen.on { display: flex; }
+  [hidden] { display: none !important; }
+  header { display: flex; align-items: center; gap: 10px; padding: 6px 2px; }
+  .wordmark { font-family: Georgia, "Times New Roman", serif; font-weight: 700;
+              font-size: 1.15rem; letter-spacing: .08em; line-height: 1.2;
+              flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .wordmark span { color: var(--accent); }
+  /* The clock: minutes and seconds, hours once there are any, ticking. */
+  #clock { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1rem;
+           font-variant-numeric: tabular-nums; color: var(--ink-soft); flex: none; }
+  .menubtn { border: 1px solid var(--line); background: var(--panel);
+             color: var(--ink-soft); border-radius: 999px; width: 44px; height: 44px;
+             font-size: 1.1rem; cursor: pointer; flex: none;
+             display: inline-flex; align-items: center; justify-content: center; }
+  .menubtn svg { width: 22px; height: 22px; fill: none; stroke: currentColor;
+                 stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+
+  /* The progress meter rides at the top while the grid scrolls under it. No
+     numbers, no label: the bar is the only indication of how far there is to go. */
+  #topbar { position: sticky; top: 0; z-index: 6; background: var(--paper);
+            padding: 6px 2px 10px; border-bottom: 1px solid var(--line); }
+  .mbar { height: 8px; border-radius: 999px; background: var(--key); overflow: hidden; }
+  .mfill { height: 100%; width: 0; border-radius: 999px; background: var(--good);
+           transition: width .4s ease; }
+
+  /* The thumbnails: three to a row, square, the stencil on a dark ground. */
+  #grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding-top: 12px; }
+  .tile { aspect-ratio: 1; width: 100%; background: #141617; border: 2px solid var(--line);
+          border-radius: 12px; padding: 6%; cursor: pointer; overflow: hidden;
+          display: block; }
+  .tile img { display: block; width: 100%; height: 100%; object-fit: contain;
+              pointer-events: none; }
+  .tile.started { border: 3px solid var(--amber); }
+  .tile.passed { border: 3px solid var(--good); cursor: default; }
+  /* The badge: a disc over the top-right corner with a white tick in it. */
+  .badge { position: absolute; top: -6px; right: -6px; width: 28px; height: 28px;
+           border-radius: 50%; background: var(--good); display: flex;
+           align-items: center; justify-content: center; pointer-events: none; }
+  .badge svg { width: 16px; height: 16px; fill: none; stroke: #fff; stroke-width: 3;
+               stroke-linecap: round; stroke-linejoin: round; }
+
+  /* The ending: one line, and with the leaderboard baked in, the time and the board. */
+  #finish { padding: 22px 2px 8px; text-align: center; }
+  .congrats { font-family: Georgia, serif; font-size: 1.5rem; font-weight: 700;
+              color: var(--good); }
+  #owntime { margin-top: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+             font-size: 1.2rem; font-variant-numeric: tabular-nums; }
+  #board { list-style: none; margin: 16px auto 0; max-width: 360px; text-align: left; }
+  #board li { display: flex; gap: 10px; align-items: baseline; padding: 7px 10px;
+              border-top: 1px solid var(--line); font-size: .95rem; }
+  #board li:first-child { border-top: none; }
+  #board .rank { flex: 0 0 2em; text-align: right; color: var(--ink-soft);
+                 font-variant-numeric: tabular-nums; }
+  #board .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+                white-space: nowrap; }
+  #board .when { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                 font-variant-numeric: tabular-nums; }
+  #board li.me { color: var(--accent); font-weight: 700; }
+  #board li.me .rank { color: var(--accent); }
+
+  /* The name screen, once. */
+  #s-name .spacer { flex: 1; }
+  #namebox { width: 100%; padding: 14px; font-size: 1.05rem; border-radius: 10px;
+             border: 1.5px solid var(--line); background: var(--panel); color: var(--ink);
+             min-height: 50px; margin-bottom: 12px; }
+  #namebox:focus-visible { outline: 2px solid var(--accent); }
+  .btn { border: none; border-radius: 10px; padding: 14px 0; font-size: .98rem;
+         font-weight: 600; cursor: pointer; width: 100%; min-height: 46px; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); }
+  .btn.primary:disabled { opacity: .45; cursor: default; }
+  .btn.ghost { background: var(--key); color: var(--key-ink); }
+
+  /* The map screen: full screen over the main one, the map and the back
+     button, and along the bottom a tile per stencil that has no place. */
+  #s-map { position: fixed; inset: 0; z-index: 30; background: var(--paper); display: none; }
+  #s-map.on { display: block; }
+  #mapview { position: absolute; inset: 0; background: var(--key); }
+  #mapback { position: absolute; left: 12px; top: calc(12px + env(safe-area-inset-top, 0px));
+             z-index: 1100; border: none; background: var(--panel); color: var(--ink);
+             width: 44px; height: 44px; border-radius: 999px; font-size: 1.3rem;
+             cursor: pointer; box-shadow: var(--shadow); }
+  #qrow { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1100;
+          display: flex; gap: 8px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+          overflow-x: auto; pointer-events: none; }
+  #qrow .tile { flex: 0 0 72px; width: 72px; height: 72px; aspect-ratio: auto;
+                pointer-events: auto; color: var(--accent); font-family: Georgia, serif;
+                font-weight: 700; font-size: 2rem; display: flex; align-items: center;
+                justify-content: center; }
+  .leaflet-popup-content { margin: 8px; }
+  .pop { width: 140px; height: 140px; background: #141617; border-radius: 8px;
+         padding: 6%; display: flex; }
+  .pop img { width: 100%; height: 100%; object-fit: contain; }
+  .leaflet-container { font-family: inherit; }
+
+  /* The tick. iOS Safari has no vibration API, and it ticks a native switch
+     control only when a finger lands on the switch itself: toggled from
+     script, by its label or by its own click(), it stays silent. So every
+     button carries an invisible switch stretched over its whole face. The
+     finger lands on the switch, the phone ticks, and the tap bubbles up to the
+     button and does what the button does. Scaled with a transform because a
+     native control ignores width and height; clipped so it never spills. */
+  button { position: relative; }
+  .tickpad { position: absolute; inset: 0; overflow: hidden; display: block;
+             border-radius: inherit; }
+  .tickpad input { position: absolute; left: 50%; top: 50%; width: 51px; height: 31px;
+                   margin: -15.5px 0 0 -25.5px; opacity: 0; transform-origin: 50% 50%;
+                   transform: scale(var(--sx, 1), var(--sy, 1)); }
+  button:disabled .tickpad { pointer-events: none; }
+  .tickinfo { margin-top: 10px; font-size: .78rem; line-height: 1.45; color: var(--ink-soft);
+              white-space: pre-line; border-left: 3px solid var(--line); padding-left: 10px; }
+
+  #modal { position: fixed; inset: 0; background: rgba(14,12,10,.55); display: none;
+           align-items: center; justify-content: center; padding: 18px; z-index: 50; }
+  #modal.show { display: flex; }
+  .card { background: var(--panel); color: var(--ink); border-radius: 16px;
+          padding: 22px 20px; max-width: 400px; width: 100%;
+          box-shadow: 0 12px 40px rgba(0,0,0,.35); max-height: 86dvh; overflow-y: auto; }
+  .card h2 { font-family: Georgia, serif; font-size: 1.3rem; margin-bottom: 8px; }
+  .card .sub { color: var(--ink-soft); font-size: .84rem; margin-bottom: 10px; line-height: 1.5; }
+  .btnrow { display: flex; gap: 8px; margin-top: 14px; }
+  .btnrow .btn { flex: 1; padding: 12px 0; font-size: .9rem; }
+  .tool:focus-visible, .btn:focus-visible, .tile:focus-visible, .menubtn:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+           background: var(--ink); color: var(--paper); font-size: .82rem; padding: 10px 16px;
+           border-radius: 14px; opacity: 0; transition: opacity .25s; pointer-events: none;
+           z-index: 60; width: calc(100% - 32px); max-width: 420px; text-align: center;
+           line-height: 1.35; }
+  #toast.show { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+
+<!-- The name, once, before the first hunt on this phone. Only with the
+     leaderboard baked in: without a board there is nobody to name. -->
+<div class="screen" id="s-name">
+  <header><div class="wordmark" id="huntname-name"></div></header>
+  <div class="spacer"></div>
+  <input id="namebox" type="text" placeholder="Your name" maxlength="24" autocomplete="off"
+         autocapitalize="words" autocorrect="off" spellcheck="false" enterkeyhint="go"
+         aria-label="Your name">
+  <button class="btn primary" id="playbtn" disabled>Play</button>
+</div>
+
+<!-- The main screen. No stencil is numbered and no count is written anywhere:
+     the bar is the only indication of how far there is to go. -->
+<div class="screen" id="s-main">
+  <header>
+    <div class="wordmark" id="huntname"></div>
+    <div id="clock">0:00</div>
+    <button class="menubtn" id="mapbtn" aria-label="Map" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 6.5 9 4l6 2.5 6-2.5v13l-6 2.5-6-2.5-6 2.5z"/>
+        <path d="M9 4v13M15 6.5v13"/>
+      </svg>
+    </button>
+    <button class="menubtn" id="menubtn" aria-label="Menu">⋯</button>
+  </header>
+  <div id="topbar"><div class="mbar"><div id="progressfill" class="mfill"></div></div></div>
+  <div id="grid"></div>
+  <div id="finish" hidden>
+    <div class="congrats">Congratulations!</div>
+    <div id="owntime" hidden></div>
+    <ol id="board" hidden></ol>
+  </div>
+</div>
+
+<div id="s-map">
+  <div id="mapview"></div>
+  <button id="mapback" aria-label="Back">←</button>
+  <div id="qrow" hidden></div>
+</div>
+
+<div id="modal"><div class="card" id="modalcard"></div></div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<!-- HUNT GOES HERE -->
+<script src="lens.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const HUNT = window.HUNT || null;
+const SUPABASE = window.SUPABASE || null;
+
+// A fix worse than this is no information: the line under the camera stays
+// empty rather than pointing somewhere the phone is not.
+const ACC_USELESS_M = 75;
+const FETCH_MS = 10000;          // the leaderboard's patience with the network
+const BOARD_LIMIT = 50;
+
+/* ---- state, on the phone ----
+   Namespaced by hunt, so two hunts served from the same site do not read each
+   other's tiles. The name is not namespaced: one phone, one player, every
+   hunt. */
+const NS = "treasure." + (HUNT ? HUNT.id : "none") + ".";
+const LS = {
+  get: (k, d) => { try { return JSON.parse(localStorage.getItem(NS + k)) ?? d; }
+                   catch { return d; } },
+  set: (k, v) => { try { localStorage.setItem(NS + k, JSON.stringify(v)); } catch {} },
+  del: (k) => { try { localStorage.removeItem(NS + k); } catch {} },
+};
+const NAME_KEY = "treasure.name";
+function getName() { try { return localStorage.getItem(NAME_KEY) || ""; } catch { return ""; } }
+function setName(v) { try { localStorage.setItem(NAME_KEY, v); } catch {} }
+
+let STATE = null;      // { startedAt, started: {id: true}, done: {id: ms}, run_id, posted }
+let MAP = null;        // the Leaflet map, once the map screen has been opened
+let mapWatch = null;   // a watchPosition, only while the map screen is open
+let lastTick = null;
+
+function freshState() { return { startedAt: null, started: {}, done: {} }; }
+function saveState() { if (STATE) LS.set("state", STATE); }
+function loadState() {
+  const s = LS.get("state", null);
+  if (!s || typeof s !== "object") return freshState();
+  s.started = s.started || {};
+  s.done = s.done || {};
+  if (typeof s.startedAt !== "number") s.startedAt = null;
+  return s;
+}
+
+function toast(msg) {
+  $("toast").textContent = msg;
+  $("toast").classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => $("toast").classList.remove("show"), 3400);
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function closeModal() { $("modal").classList.remove("show"); }
+function uuid() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+/* ---- geography. The same haversine as architect-order, and the eight points. ---- */
+function haversineM(lat1, lon1, lat2, lon2) {
+  const R = 6371008.8, r = Math.PI / 180;
+  const p1 = lat1 * r, p2 = lat2 * r;
+  const a = Math.sin((lat2 - lat1) * r / 2) ** 2
+          + Math.cos(p1) * Math.cos(p2) * Math.sin((lon2 - lon1) * r / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function bearingDeg(lat1, lon1, lat2, lon2) {
+  const r = Math.PI / 180;
+  const p1 = lat1 * r, p2 = lat2 * r, dl = (lon2 - lon1) * r;
+  return (Math.atan2(Math.sin(dl) * Math.cos(p2),
+                     Math.cos(p1) * Math.sin(p2)
+                     - Math.sin(p1) * Math.cos(p2) * Math.cos(dl)) / r + 360) % 360;
+}
+const POINTS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+function compassPoint(fromLat, fromLon, toLat, toLon) {
+  return POINTS[Math.round(bearingDeg(fromLat, fromLon, toLat, toLon) / 45) % 8];
+}
+// Rounded the way a person would say it: to the nearest hundred metres over
+// a kilometre, fifty from five hundred, ten under that.
+function aboutM(d) {
+  if (d >= 1000) return `About ${(Math.round(d / 100) / 10).toFixed(1)} km`;
+  if (d >= 500) return `About ${Math.round(d / 50) * 50} m`;
+  return `About ${Math.max(10, Math.round(d / 10) * 10)} m`;
+}
+// The line under the camera: the distance and the bearing from where the
+// phone is to where the photograph was taken. Not which way the phone faces.
+function distanceLineTo(loc) {
+  return (lat, lon, acc) => {
+    if ((acc || 0) > ACC_USELESS_M) return "";
+    const d = haversineM(lat, lon, loc.lat, loc.lon);
+    return `${aboutM(d)} · ${compassPoint(lat, lon, loc.lat, loc.lon)}`;
+  };
+}
+
+/* ---- haptics ----
+   One tick, on a tap. Android vibrates. iPhone has no vibration API, so a
+   native switch control under the finger ticks instead (armTicks, below).
+   Both only work from inside the tap itself. The strong pattern is for the
+   pass: the match loop fires it on Android, and the Complete! wash carries
+   data-strong so a tap on it is strong too. */
+const TICK_MS = 50;
+const TICK_STRONG = [60, 50, 60];
+function haptic(strong) {
+  const out = { vibrate: "none", strong: !!strong };
+  try {
+    if (navigator.vibrate) out.vibrate = navigator.vibrate(strong ? TICK_STRONG : TICK_MS) ? "yes" : "refused";
+  } catch (err) { out.vibrate = "error"; }
+  haptic.count += 1;
+  return out;
+}
+haptic.count = 0;
+
+/* ---- every tap ticks ----
+   Each button gets an invisible native switch stretched over its face. On
+   iPhone the finger lands on the switch and the phone ticks, which is the one
+   way a web page gets a tick there; the tap bubbles to the button and does
+   the button's job. Everywhere else the overlay is inert and the tick is the
+   vibration, made once per tap here in the capture phase, before the button's
+   own handler runs, so it is inside the tap and never after an await. */
+const SWITCH_W = 51, SWITCH_H = 31;     // a native switch's own size
+const sized = new ResizeObserver((entries) => {
+  for (const e of entries) fitTick(e.target);
+});
+function fitTick(btn) {
+  const sw = btn.querySelector(":scope > .tickpad > input");
+  if (!sw) return;
+  const r = btn.getBoundingClientRect();
+  sw.style.setProperty("--sx", Math.max(0.2, r.width / SWITCH_W).toFixed(3));
+  sw.style.setProperty("--sy", Math.max(0.2, r.height / SWITCH_H).toFixed(3));
+}
+function armTicks(root) {
+  const list = root.matches && root.matches("button") ? [root] : [];
+  for (const b of list.concat([...root.querySelectorAll("button")])) {
+    if (b.dataset.ticked) continue;
+    b.dataset.ticked = "1";
+    const pad = document.createElement("span");
+    pad.className = "tickpad";
+    const sw = document.createElement("input");
+    sw.type = "checkbox";
+    sw.setAttribute("switch", "");
+    sw.tabIndex = -1;
+    sw.setAttribute("aria-hidden", "true");
+    pad.appendChild(sw);
+    b.appendChild(pad);
+    fitTick(b);
+    sized.observe(b);
+  }
+}
+// Buttons come and go with every render, on the page, in the camera screen
+// and in Leaflet's popups, so new ones are armed as they appear.
+new MutationObserver((muts) => {
+  for (const m of muts) for (const n of m.addedNodes) if (n.nodeType === 1) armTicks(n);
+}).observe(document.documentElement, { childList: true, subtree: true });
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest && ev.target.closest("button");
+  if (!b || b.disabled) return;
+  lastTick = haptic(b.hasAttribute("data-strong"));
+}, true);
+
+// What the phone says about itself, and where its tick setting lives. Test
+// mode only, from the menu.
+function hapticReport(r) {
+  const ua = navigator.userAgent;
+  const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  const android = /Android/.test(ua);
+  const ver = (ua.match(/OS (\d+)[._](\d+)/) || ua.match(/Android (\d+(\.\d+)?)/) || [])[0] || "";
+  const inApp = /FBAN|FBAV|Instagram|Line\/|MicroMessenger|GSA\//.test(ua) || (ios && !/Safari/.test(ua));
+  const switchOk = "switch" in document.createElement("input");
+  const facts = [
+    ios ? "iPhone" : android ? "Android" : "not a phone",
+    ver, navigator.standalone ? "Home Screen app" : "", inApp ? "in-app browser" : "",
+    `vibrate: ${r.vibrate}`, `switch under the finger: ${switchOk ? "yes" : "unsupported"}`,
+  ].filter(Boolean).join(" · ");
+  let advice;
+  if (ios && !switchOk) {
+    advice = "This iPhone's browser does not know the switch control, so it cannot tick. iOS 17.4 or later, in Safari or Chrome.";
+  } else if (ios) {
+    advice = "Your finger landed on a switch, which is the one way this phone ticks. If nothing was felt: Settings → Sounds & Haptics → System Haptics on, and Haptics set to Always Play or Play in Silent Mode. Settings → Accessibility → Touch → Vibration on. An in-app browser or a Home Screen copy may not tick; open the link in Safari itself.";
+  } else if (android) {
+    advice = r.vibrate === "refused"
+      ? "The browser refused to vibrate. Chrome only allows it after a tap on the page, which this was, so it is likely a site setting: tap the lock icon in the address bar → Permissions, or Chrome → Settings → Site settings, and allow vibration if it is listed."
+      : "Vibrate was accepted, so if nothing was felt it is the phone: Settings → Sound & vibration → Vibration & haptics on, with touch feedback above zero, and Do Not Disturb off.";
+  } else {
+    advice = "A computer has no tick. Try it on the phone.";
+  }
+  return facts + "\n" + advice;
+}
+window.haptic = haptic;
+
+/* ---- the clock ---- */
+function fmtTime(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+  const p = (n) => String(n).padStart(2, "0");
+  return h ? `${h}:${p(m)}:${p(ss)}` : `${m}:${p(ss)}`;
+}
+function allDone() { return HUNT.stencils.every((s) => STATE.done[s.id]); }
+// The finishing time once every stencil is done: the last pass against the
+// first tap. Null until then.
+function finishMs() {
+  if (!STATE.startedAt || !allDone()) return null;
+  const last = Math.max(...HUNT.stencils.map((s) => STATE.done[s.id]));
+  return Math.max(0, last - STATE.startedAt);
+}
+function paintClock() {
+  const fin = finishMs();
+  const ms = fin != null ? fin : STATE.startedAt ? Date.now() - STATE.startedAt : 0;
+  $("clock").textContent = fmtTime(ms);
+}
+
+/* ---- the main screen ---- */
+function tileState(s) {
+  if (STATE.done[s.id]) return "passed";
+  if (STATE.started[s.id]) return "started";
+  return "";
+}
+const TICK_SVG = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5"/></svg>`;
+
+function renderMain() {
+  const grid = $("grid");
+  grid.innerHTML = "";
+  for (const s of HUNT.stencils) {
+    const b = document.createElement("button");
+    const st = tileState(s);
+    b.className = "tile" + (st ? " " + st : "");
+    b.dataset.id = s.id;
+    b.setAttribute("aria-label", st === "passed" ? "Passed" : "Open the camera");
+    const img = document.createElement("img");
+    img.src = s.src;
+    img.alt = "";
+    img.loading = "eager";
+    b.appendChild(img);
+    if (st === "passed") {
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.innerHTML = TICK_SVG;
+      b.appendChild(badge);
+    }
+    // A passed tile is inert: its tap ticks like any tap and opens nothing.
+    b.onclick = st === "passed" ? null : () => openCamera(s);
+    grid.appendChild(b);
+  }
+  const n = HUNT.stencils.length;
+  const passed = HUNT.stencils.filter((s) => STATE.done[s.id]).length;
+  $("progressfill").style.width = (n ? 100 * passed / n : 0) + "%";
+  $("mapbtn").hidden = !HUNT.map;
+  paintClock();
+  paintFinish();
+}
+
+function paintFinish() {
+  const fin = finishMs();
+  const box = $("finish");
+  box.hidden = fin == null;
+  $("owntime").hidden = !(fin != null && SUPABASE);
+  $("board").hidden = !(fin != null && SUPABASE);
+  if (fin == null) { $("board").innerHTML = ""; return; }
+  if (SUPABASE) {
+    $("owntime").textContent = fmtTime(fin);
+    // The pass itself started the sync; a page opened on a finished walk
+    // starts it here. A post that failed is tried again on the next load,
+    // not on every rebuild of the screen.
+    if (!boardTried) syncBoard();
+  }
+}
+
+// A thumbnail tap is the user gesture the camera needs, so the camera is
+// asked for inside it. The first tap starts the clock, for good.
+function openCamera(s) {
+  if (!window.Lens) { toast("The camera screen did not load."); return; }
+  if (STATE.done[s.id]) return;
+  if (!STATE.startedAt) {
+    STATE.startedAt = Date.now();
+    STATE.run_id = STATE.run_id || uuid();
+  }
+  STATE.started[s.id] = true;
+  saveState();
+  paintClock();
+  window.Lens.open(s, {
+    testMode: !!HUNT.test_mode,
+    distanceLine: s.location ? distanceLineTo(s.location) : null,
+    onPass: (how) => {
+      STATE.done[s.id] = Date.now();
+      delete STATE.started[s.id];
+      saveState();
+      // The pass itself is a progress moment: the strong pattern, at once,
+      // from the match loop. Chrome allows a vibration outside a tap once the
+      // page has been tapped, which it has. A skip is not a success.
+      if (how === "match") lastTick = haptic(true);
+      if (allDone() && SUPABASE) syncBoard();
+    },
+    onClose: () => renderMain(),
+  });
+}
+
+/* ---- the leaderboard, on Supabase ----
+   On the last pass the run is posted; then, and on every load of a finished
+   walk, the fastest fifty are fetched and shown. If the post never got
+   through (offline, say), it is tried again before the fetch. While a request
+   is in flight or after it fails the board is simply empty. */
+let boardSync = null;      // the sync in flight, if any
+let boardTried = false;    // one sync per page load, from the pass or from the rebuild
+function sbFetch(path, init) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), FETCH_MS);
+  const headers = Object.assign({
+    apikey: SUPABASE.anon_key,
+    Authorization: "Bearer " + SUPABASE.anon_key,
+  }, (init && init.headers) || {});
+  return fetch(SUPABASE.url.replace(/\/$/, "") + path, Object.assign({}, init, { headers, signal: ctl.signal }))
+    .finally(() => clearTimeout(t));
+}
+async function postCompletion() {
+  const fin = finishMs();
+  if (fin == null || !STATE.run_id) return;
+  const body = { run_id: STATE.run_id, hunt: HUNT.id, name: getName(), ms: fin };
+  const res = await sbFetch("/rest/v1/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+    body: JSON.stringify(body),
+  });
+  // Already there is as good as posted: the run_id is unique on the server.
+  if (res.ok || res.status === 409) { STATE.posted = true; saveState(); return; }
+  throw new Error("post " + res.status);
+}
+async function fetchBoard() {
+  const res = await sbFetch(`/rest/v1/completions?hunt=eq.${encodeURIComponent(HUNT.id)}`
+                            + `&select=run_id,name,ms&order=ms.asc&limit=${BOARD_LIMIT}`);
+  if (!res.ok) throw new Error("board " + res.status);
+  const rows = await res.json();
+  return Array.isArray(rows) ? rows : [];
+}
+function syncBoard() {
+  if (!SUPABASE) return Promise.resolve();
+  if (boardSync) return boardSync;
+  boardTried = true;
+  boardSync = (async () => {
+    let rows = null;
+    try {
+      if (!STATE.posted) await postCompletion();
+      rows = await fetchBoard();
+    } catch (err) { rows = null; }
+    boardSync = null;
+    paintBoard(rows);
+  })();
+  return boardSync;
+}
+function paintBoard(rows) {
+  const ol = $("board");
+  ol.innerHTML = "";
+  if (!rows || finishMs() == null) return;
+  rows.slice(0, BOARD_LIMIT).forEach((r, i) => {
+    const li = document.createElement("li");
+    li.className = "row" + (r.run_id && r.run_id === STATE.run_id ? " me" : "");
+    if (r.run_id) li.dataset.run = r.run_id;
+    li.innerHTML = `<span class="rank">${i + 1}</span>`
+      + `<span class="who">${escapeHtml(r.name || "")}</span>`
+      + `<span class="when">${fmtTime(Number(r.ms) || 0)}</span>`;
+    ol.appendChild(li);
+  });
+}
+
+/* ---- the map screen ----
+   A street map of the hunt's bounds with a marker per located stencil, the
+   player as a dot, and a ? tile along the bottom per stencil with no place;
+   or, for a hand-made map, the picture to pan and pinch and nothing else. */
+function token(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+function markerColour(s) {
+  const st = tileState(s);
+  return token(st === "passed" ? "--good" : st === "started" ? "--amber" : "--accent");
+}
+function popupFor(s) {
+  return `<div class="pop"><img src="${escapeHtml(s.src)}" alt=""></div>`;
+}
+let mapBits = { markers: [], dot: null, ring: null, image: null };
+
+function openMap() {
+  if (!HUNT.map || !window.L) { toast("The map did not load."); return; }
+  $("s-map").classList.add("on");
+  const first = !MAP;
+  if (first) {
+    MAP = HUNT.map.bounds ? makeTileMap() : makeImageMap();
+    window.__th.map = () => MAP;
+  }
+  MAP.invalidateSize();
+  if (HUNT.map.bounds) {
+    fitHunt();
+    paintMarkers();
+    paintQRow();
+    startMapWatch();
+  } else if (mapBits.image) {
+    MAP.fitBounds(mapBits.image.getBounds());
+  }
+}
+function fitHunt() {
+  const [[s, w], [n, e]] = HUNT.map.bounds;
+  MAP.fitBounds([[s, w], [n, e]], { padding: [0, 0], animate: false });
+}
+function makeTileMap() {
+  const map = L.map($("mapview"), { zoomControl: false, zoomSnap: 0, attributionControl: true });
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19, attribution: "© OpenStreetMap contributors",
+  }).addTo(map);
+  return map;
+}
+function makeImageMap() {
+  const map = L.map($("mapview"), { crs: L.CRS.Simple, zoomControl: false, zoomSnap: 0,
+                                   attributionControl: false, minZoom: -6 });
+  const img = new Image();
+  const place = () => {
+    const bounds = [[0, 0], [img.naturalHeight || 1000, img.naturalWidth || 1000]];
+    if (mapBits.image) mapBits.image.remove();
+    mapBits.image = L.imageOverlay(HUNT.map.image, bounds).addTo(map);
+    map.setMaxBounds(null);
+    map.fitBounds(bounds);
+  };
+  img.onload = place;
+  img.onerror = place;
+  img.src = HUNT.map.image;
+  if (img.complete && img.naturalWidth) place();
+  return map;
+}
+function paintMarkers() {
+  for (const m of mapBits.markers) m.remove();
+  mapBits.markers = [];
+  for (const s of HUNT.stencils) {
+    if (!s.location) continue;
+    const m = L.circleMarker([s.location.lat, s.location.lon], {
+      radius: 10, color: "#fff", weight: 2, fillColor: markerColour(s), fillOpacity: 1,
+    }).addTo(MAP);
+    m.bindPopup(popupFor(s), { closeButton: false, minWidth: 140 });
+    m.stencilId = s.id;
+    mapBits.markers.push(m);
+  }
+}
+function paintQRow() {
+  const row = $("qrow");
+  row.innerHTML = "";
+  const unplaced = HUNT.stencils.filter((s) => !s.location);
+  row.hidden = !unplaced.length;
+  for (const s of unplaced) {
+    const b = document.createElement("button");
+    const st = tileState(s);
+    b.className = "tile q" + (st ? " " + st : "");
+    b.dataset.id = s.id;
+    b.setAttribute("aria-label", "Somewhere");
+    b.textContent = "?";
+    if (st === "passed") {
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.innerHTML = TICK_SVG;
+      b.appendChild(badge);
+    }
+    b.onclick = () => {
+      L.popup({ closeButton: false, minWidth: 140 })
+        .setLatLng(MAP.getCenter()).setContent(popupFor(s)).openOn(MAP);
+    };
+    row.appendChild(b);
+  }
+}
+// The player: a blue dot and its accuracy, moved as fixes arrive. The map
+// does not follow it.
+function startMapWatch() {
+  stopMapWatch();
+  if (!navigator.geolocation) return;
+  mapWatch = navigator.geolocation.watchPosition(
+    (pos) => {
+      if (!$("s-map").classList.contains("on")) return;
+      const c = pos.coords;
+      const at = [c.latitude, c.longitude];
+      if (!mapBits.dot) {
+        mapBits.ring = L.circle(at, { radius: c.accuracy || 0, color: "#2A7FFF", weight: 1,
+                                      fillColor: "#2A7FFF", fillOpacity: .12, interactive: false }).addTo(MAP);
+        mapBits.dot = L.circleMarker(at, { radius: 6, color: "#fff", weight: 2, fillColor: "#2A7FFF",
+                                           fillOpacity: 1, interactive: false }).addTo(MAP);
+      } else {
+        mapBits.dot.setLatLng(at);
+        mapBits.ring.setLatLng(at);
+        mapBits.ring.setRadius(c.accuracy || 0);
+      }
+    },
+    () => {},
+    { enableHighAccuracy: true, maximumAge: 5000 });
+}
+// A watch left running is a battery spent on a screen nobody is looking at.
+function stopMapWatch() {
+  if (mapWatch !== null && navigator.geolocation) navigator.geolocation.clearWatch(mapWatch);
+  mapWatch = null;
+}
+function closeMap() {
+  stopMapWatch();
+  if (MAP) MAP.closePopup();
+  $("s-map").classList.remove("on");
+}
+
+/* ---- the menu ---- */
+function openMenu() {
+  $("modalcard").innerHTML = `<h2>Menu</h2>
+    <div class="btnrow"><button class="btn ghost" id="mclose">Close</button>
+      <button class="btn primary" id="mrestart">Start over</button></div>${HUNT.test_mode
+      ? `<div class="btnrow"><button class="btn ghost" id="mtick">Test the tick</button></div>
+         <div id="tickinfo" class="tickinfo" hidden></div>` : ""}`;
+  $("modal").classList.add("show");
+  $("mclose").onclick = closeModal;
+  $("mrestart").onclick = confirmRestart;
+  if ($("mtick")) $("mtick").onclick = () => {
+    $("tickinfo").textContent = hapticReport(lastTick || { vibrate: "none" });
+    $("tickinfo").hidden = false;
+  };
+}
+// Always through the confirm: a thumb on a phone in the rain is not a decision.
+function confirmRestart() {
+  $("modalcard").innerHTML = `<h2>Start over?</h2>
+    <div class="sub">This forgets every stencil and the clock. Your name is kept.
+    It cannot be undone.</div>
+    <div class="btnrow">
+      <button class="btn ghost" id="sono">Keep going</button>
+      <button class="btn primary" id="soyes">Start over</button>
+    </div>`;
+  $("modal").classList.add("show");
+  $("sono").onclick = closeModal;
+  $("soyes").onclick = () => {
+    LS.del("state");
+    STATE = freshState();
+    boardSync = null; boardTried = false;
+    closeModal();
+    renderMain();
+    window.scrollTo(0, 0);
+  };
+}
+
+/* ---- the name screen ---- */
+function showName() {
+  $("s-main").classList.remove("on");
+  $("s-name").classList.add("on");
+  const box = $("namebox"), play = $("playbtn");
+  const check = () => { play.disabled = !box.value.trim(); };
+  box.oninput = check;
+  check();
+  const go = () => {
+    const v = box.value.trim().slice(0, 24);
+    if (!v) return;
+    setName(v);
+    showMain();
+  };
+  play.onclick = go;
+  box.onkeydown = (ev) => { if (ev.key === "Enter") { ev.preventDefault(); if (!play.disabled) go(); } };
+}
+function showMain() {
+  $("s-name").classList.remove("on");
+  $("s-main").classList.add("on");
+  renderMain();
+}
+
+/* ---- wiring ---- */
+function wordmark(el, name) {
+  const words = String(name).trim().split(/\s+/);
+  el.innerHTML = words.length > 1
+    ? escapeHtml(words.slice(0, -1).join(" ")) + " <span>" + escapeHtml(words[words.length - 1]) + "</span>"
+    : escapeHtml(name);
+}
+armTicks(document.body);          // the buttons that were here before the observer
+$("menubtn").onclick = openMenu;
+$("mapbtn").onclick = openMap;
+$("mapback").onclick = closeMap;
+$("modal").onclick = (ev) => { if (ev.target === $("modal")) closeModal(); };
+window.__th = { state: () => STATE, map: () => MAP, hunt: HUNT, supabase: SUPABASE };
+
+(() => {
+  if (!HUNT) {
+    document.body.textContent = "No hunt was baked into this page.";
+    return;
+  }
+  document.title = HUNT.name;
+  wordmark($("huntname"), HUNT.name);
+  wordmark($("huntname-name"), HUNT.name);
+  STATE = loadState();
+  setInterval(paintClock, 1000);
+  if (SUPABASE && !getName()) showName();
+  else showMain();
+})();
+</script>
+</body>
+</html>

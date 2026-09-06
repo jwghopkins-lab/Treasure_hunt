@@ -1,0 +1,13 @@
+{
+  "id": "fixture-plain",
+  "name": "Fixture, plain",
+  "test_mode": false,
+  "stencils": [
+    {"id": "door", "src": "img/fixture/door-stencil.png"},
+    {"id": "window", "src": "img/fixture/window-stencil.png"},
+    {"id": "lamp", "src": "img/fixture/lamp-stencil.png"},
+    {"id": "bench", "src": "img/fixture/bench-stencil.png"},
+    {"id": "sign", "src": "img/fixture/sign-stencil.png"},
+    {"id": "fountain", "src": "img/fixture/fountain-stencil.png"}
+  ]
+}
