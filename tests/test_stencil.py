@@ -62,7 +62,8 @@ class DoorTest(unittest.TestCase):
     def test_exits_cleanly_with_one_entry(self):
         self.assertEqual(self.proc.returncode, 0, self.proc.stderr)
         self.assertEqual(entries(self.proc), [
-            {"id": "door", "src": str(self.out / "door-stencil.png")}])
+            {"id": "door", "src": str(self.out / "door-stencil.png"),
+             "hint": str(self.out / "door-stencil-hint.png")}])
 
     def test_png_is_the_photo_size_in_two_colours(self):
         with Image.open(DOOR) as photo:
@@ -99,7 +100,8 @@ class BlankTest(unittest.TestCase):
             self.assertEqual(im.size, (600, 800))
             self.assertEqual(seen, {CLEAR})
             self.assertEqual(entries(proc), [
-                {"id": "wall", "src": str(Path(tmp) / "out" / "wall-stencil.png")}])
+                {"id": "wall", "src": str(Path(tmp) / "out" / "wall-stencil.png"),
+                 "hint": str(Path(tmp) / "out" / "wall-stencil-hint.png")}])
 
 
 def scene(size):
@@ -153,7 +155,8 @@ class IdTest(unittest.TestCase):
                 proc = run(photo, "--long", "400", "--out", out)
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 self.assertEqual(entries(proc), [
-                    {"id": "red-door", "src": f"img/{out.name}/red-door-stencil.png"}])
+                    {"id": "red-door", "src": f"img/{out.name}/red-door-stencil.png",
+                     "hint": f"img/{out.name}/red-door-stencil-hint.png"}])
         finally:
             shutil.rmtree(out)
 
@@ -211,6 +214,17 @@ class ChoiceTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self.chosen(proc), 60)
         self.assertNotIn("note:", proc.stderr)
+
+    def test_a_hint_stencil_is_written_with_more_of_the_picture(self):
+        proc = run(self.shapes(), "--out", self.out)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        entry = entries(proc)[0]
+        self.assertEqual(entry["hint"], entry["src"].replace("-stencil.png", "-stencil-hint.png"))
+        base, base_colours = colours(self.out / "shapes-stencil.png")
+        hint, hint_colours = colours(self.out / "shapes-stencil-hint.png")
+        self.assertEqual(hint.size, base.size)
+        self.assertLessEqual(hint_colours, {ORANGE, CLEAR})
+        self.assertGreater(hint.histogram()[-1], base.histogram()[-1])
 
     def test_texture_raises_the_limit_and_is_reported(self):
         proc = run(self.texture(), "--out", self.out)

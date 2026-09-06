@@ -2,20 +2,65 @@
   "id": "fixture",
   "name": "Fixture",
   "test_mode": true,
-  "map": {"bounds": [[51.5036, -0.1753], [51.5141, -0.1568]]},
+  "map": {
+    "bounds": [
+      [
+        51.5036,
+        -0.1753
+      ],
+      [
+        51.5141,
+        -0.1568
+      ]
+    ]
+  },
   "stencils": [
-    {"id": "door", "src": "img/fixture/door-stencil.png",
-     "clue": "A red door with a fanlight, seen from the path.",
-     "location": {"lat": 51.5062, "lon": -0.1731}},
-    {"id": "window", "src": "img/fixture/window-stencil.png",
-     "location": {"lat": 51.5049, "lon": -0.1697}},
-    {"id": "lamp", "src": "img/fixture/lamp-stencil.png",
-     "clue": "The lamp by the bandstand.",
-     "location": {"lat": 51.5127, "lon": -0.1590}},
-    {"id": "bench", "src": "img/fixture/bench-stencil.png"},
-    {"id": "sign", "src": "img/fixture/sign-stencil.png"},
-    {"id": "fountain", "src": "img/fixture/fountain-stencil.png",
-     "clue": "Three tiers, looking north.",
-     "location": {"lat": 51.5085, "lon": -0.1650}}
+    {
+      "id": "door",
+      "src": "img/fixture/door-stencil.png",
+      "clue": "A red door with a fanlight, seen from the path.",
+      "location": {
+        "lat": 51.5062,
+        "lon": -0.1731
+      },
+      "hint": "img/fixture/door-stencil-hint.png"
+    },
+    {
+      "id": "window",
+      "src": "img/fixture/window-stencil.png",
+      "location": {
+        "lat": 51.5049,
+        "lon": -0.1697
+      },
+      "hint": "img/fixture/window-stencil-hint.png"
+    },
+    {
+      "id": "lamp",
+      "src": "img/fixture/lamp-stencil.png",
+      "clue": "The lamp by the bandstand.",
+      "location": {
+        "lat": 51.5127,
+        "lon": -0.159
+      },
+      "hint": "img/fixture/lamp-stencil-hint.png"
+    },
+    {
+      "id": "bench",
+      "src": "img/fixture/bench-stencil.png"
+    },
+    {
+      "id": "sign",
+      "src": "img/fixture/sign-stencil.png"
+    },
+    {
+      "id": "fountain",
+      "src": "img/fixture/fountain-stencil.png",
+      "clue": "Three tiers, looking north.",
+      "location": {
+        "lat": 51.5085,
+        "lon": -0.165
+      },
+      "hint": "img/fixture/fountain-stencil-hint.png"
+    }
   ]
 }

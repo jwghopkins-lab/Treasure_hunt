@@ -237,6 +237,14 @@ class Validation(Sandbox):
         h["stencils"][0]["src"] = 5
         self.assertFails(h, "stencil 's1': src must be a path under app/")
 
+    def test_stencil_hint_must_exist_under_app_and_is_copied(self):
+        h = hunt()
+        h["stencils"][1]["hint"] = "img/sample/s2-stencil.png"
+        images = quiet(build.validate, h, "sample")[0]
+        self.assertEqual(images.count("img/sample/s2-stencil.png"), 2)
+        h["stencils"][1]["hint"] = "img/sample/nothing-stencil-hint.png"
+        self.assertFails(h, "stencil 's2': hint 'img/sample/nothing-stencil-hint.png' is not under app/")
+
     def test_stencil_src_may_not_climb_out_of_app(self):
         (self.repo / "secret.png").write_bytes(b"PNG")
         h = hunt()
@@ -416,7 +424,7 @@ class Bake(Sandbox):
 
     def test_the_summary_line(self):
         self.build(hunt(map=BOUNDS, test_mode=True))
-        self.assertIn("sample: 7 stencils, 3 located, 1 clues, map bounds, test mode on, leaderboard off", self.stdout)
+        self.assertIn("sample: 7 stencils, 3 located, 1 clues, 0 hints, map bounds, test mode on, leaderboard off", self.stdout)
         self.build(hunt(map=IMAGE), supabase=SUPABASE)
         self.assertIn("map image, test mode off, leaderboard on", self.stdout)
         self.build(hunt())
@@ -522,6 +530,7 @@ class Index(Sandbox):
         self.assertIn('<li><a href="fish-chips/">Fish &amp; Chips &lt;3</a></li>\n    <li><a href="sample/">Sample Hunt</a></li>', page)
         self.assertEqual(page.count("<li>"), 2)
         self.assertNotIn("HUNTS GO HERE", page)
+        self.assertIn('<a href="capture/">Capture</a>', page)
         self.assertIn("built", stdout)
         # The player's palette travels with it, all three theme states.
         self.assertIn("--accent: #9E2B25", page)

@@ -42,11 +42,11 @@ test.describe("the camera screen", () => {
     expect(back.x).toBeLessThan(40);
     expect(back.y).toBeLessThan(80);
     const visibleButtons = await lens.locator("button:visible").evaluateAll((els) => els.map((e) => e.id));
-    expect(visibleButtons.sort()).toEqual(["lensback", "lensskip"]);
-    // No words but the clue and Skip.
+    expect(visibleButtons.sort()).toEqual(withClue.hint ? ["lensback", "lenshintbtn", "lensskip"] : ["lensback", "lensskip"]);
+    // No words but the clue, Skip and the hint's glyph.
     // (The mocked position is far away, so the distance line may be there too.)
     const words = await lens.evaluate((el) => el.innerText.replace(/\s+/g, " ").trim());
-    const rest = words.replace("←", "").replace("Skip", "").trim();
+    const rest = words.replace("←", "").replace("Skip", "").replace("?", "").trim();
     expect(rest.startsWith(withClue.clue)).toBe(true);
     expect(rest.slice(withClue.clue.length).trim()).toMatch(/^(About [\d.]+ (m|km) · (N|NE|E|SE|S|SW|W|NW))?$/);
     await expect(lens.locator("#lenswash")).toBeHidden();
@@ -79,7 +79,7 @@ test.describe("the camera screen", () => {
     await expect(page.locator("#lensclue")).toBeHidden();
     await expect(page.locator("#lensdist")).toBeHidden();
     const words = await page.locator("#lens").evaluate((el) => el.innerText.replace(/\s+/g, " ").trim());
-    expect(words.replace("←", "").replace("Skip", "").trim()).toBe("");
+    expect(words.replace("←", "").replace("Skip", "").replace("?", "").trim()).toBe("");
   });
 
   test("pointer drags and pinches do not move the stencil", async ({ page }) => {

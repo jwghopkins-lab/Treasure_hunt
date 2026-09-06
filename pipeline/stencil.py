@@ -30,9 +30,10 @@ chose, and it says when a photograph is mostly texture, too sparse, or too
 dark to be a good subject: those are the ones to take again. Give --speck
 to fix it by hand; --keep is 0.066 unless given.
 
-For each photograph this writes <id>-stencil.png and <id>-stencil-preview.jpg
-into --out and prints one JSON stencil entry to stdout, for pasting into the
-hunt file. Everything that is not an entry goes to stderr, so the output can
+For each photograph this writes <id>-stencil.png, <id>-stencil-hint.png (the
+same with twice as much kept, for the hint button) and
+<id>-stencil-preview.jpg into --out, and prints one JSON stencil entry to
+stdout, for pasting into the hunt file. Everything that is not an entry goes to stderr, so the output can
 be redirected and pasted whole.
 """
 
@@ -212,6 +213,7 @@ STROKE_PX = 300          # a component at least this long is a stroke, not a spe
 STROKE_SHARE = 0.6       # the share of kept pixels that should be in strokes
 SPARSE = 0.035           # under this set fraction the scorer has little to hold
 DIM = 60                 # mean brightness, of 255, under which a room is dark
+HINT_TIMES = 2           # the hint keeps this many times the stencil's share of the frame
 
 
 def choose(mag, w, h, keep, speck):
@@ -237,6 +239,22 @@ def choose(mag, w, h, keep, speck):
         notes.append(f"sparse: {frac:.1%} of the frame before thickening; "
                      "a subject with bigger, plainer edges would give the camera more to hold")
     return from_components(kept, w, h), sp, notes
+
+
+def orange(mask, w, h):
+    """The mask as the stencil PNG: thickened by one pixel, every kept pixel
+    exactly ORANGE and everything else fully transparent. MaxFilter on a
+    0/255 image gives back only 0 and 255, so the alpha is a clean mask
+    with no half-values for the scorer to threshold."""
+    lines = Image.new("L", (w, h))
+    lines.putdata([255 if m else 0 for m in mask])
+    lines = lines.filter(ImageFilter.MaxFilter(3))
+    return Image.merge("RGBA", (
+        lines.point(lambda a: ORANGE[0] if a else 0),
+        lines.point(lambda a: ORANGE[1] if a else 0),
+        lines.point(lambda a: ORANGE[2] if a else 0),
+        lines,
+    ))
 
 
 def src_for(out, png):
@@ -271,6 +289,12 @@ def make(photo, out, keep, speck, long):
     px = pixels(im)
     mag = edge_map(px, w, h)
     mask, speck, notes = choose(mag, w, h, keep, speck)
+    # The hint: the same picture with twice as much of it kept, at the same
+    # speck limit, for the hint button to lay under the real stencil. The
+    # scorer never reads it, so what it costs in texture is the player's to
+    # take or leave.
+    hint = threshold(mag, w, h, min(1.0, keep * HINT_TIMES))
+    drop_specks(hint, w, h, speck)
     if not any(mask):
         print(f"{photo}: no edges found, the stencil is empty", file=sys.stderr)
     # A dark room is noise to the camera whatever the stencil says.
@@ -278,24 +302,16 @@ def make(photo, out, keep, speck, long):
     if mean < DIM:
         notes.append(f"dim (mean brightness {mean:.0f} of 255); the camera will see noise in a dark room")
 
-    # Thicken by one pixel. MaxFilter on a 0/255 image gives back only 0
-    # and 255, so the alpha it becomes is a clean mask with no half-values
-    # for the scorer to threshold.
-    lines = Image.new("L", (w, h))
-    lines.putdata([255 if m else 0 for m in mask])
-    lines = lines.filter(ImageFilter.MaxFilter(3))
-    stencil = Image.merge("RGBA", (
-        lines.point(lambda a: ORANGE[0] if a else 0),
-        lines.point(lambda a: ORANGE[1] if a else 0),
-        lines.point(lambda a: ORANGE[2] if a else 0),
-        lines,
-    ))
+    stencil = orange(mask, w, h)
+    lines = stencil.split()[3]
 
     sid = stencil_id(photo)
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     png = out / f"{sid}-stencil.png"
     stencil.save(png, optimize=True)
+    hint_png = out / f"{sid}-stencil-hint.png"
+    orange(hint, w, h).save(hint_png, optimize=True)
     # The set fraction after thickening, at a glance: a stencil that is
     # mostly texture is a big number before it is a bad picture.
     filled = lines.histogram()[255] / (w * h)
@@ -309,7 +325,7 @@ def make(photo, out, keep, speck, long):
     preview.convert("RGB").save(pv, quality=82)
     print(f"wrote {pv}", file=sys.stderr)
 
-    return {"id": sid, "src": src_for(out, png)}
+    return {"id": sid, "src": src_for(out, png), "hint": src_for(out, hint_png)}
 
 
 def main(argv=None):

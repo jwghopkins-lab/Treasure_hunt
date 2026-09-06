@@ -89,7 +89,7 @@ could tell what it is. Write `content/<slug>.json`:
       ]
     }
 
-`clue` and `location` are optional per stencil. `map` is optional: `bounds`
+`clue`, `location` and `hint` are optional per stencil. `map` is optional: `bounds`
 is a street map of that box (the smallest box round the locations, widened
 by about 150 m), `image` is a hand-made map at `img/<slug>/map.jpg` for a
 small or indoor hunt, shown as a picture to pan and pinch with no location
@@ -129,6 +129,18 @@ exactly the edges the camera will see. The search is wider, ±5 px and five
 scales from 0.85 to 1.15, 45 evaluations, because photographs from the
 camera app lean on the scale search and the first hunt showed ±10% was
 tight.
+
+## The hint
+
+A stencil may carry a `hint`: the same picture with twice as much of it
+kept, which `stencil.py` writes beside every stencil as
+`<id>-stencil-hint.png`. With one in the hunt file, the camera screen shows
+a `?` at the top right; a tap lays the denser stencil under the real one,
+dimmer, and adds thirty seconds to the clock, once per stencil, kept in the
+phone's state and folded into the time that goes to the board. It is
+display only: the scorer keeps reading the real stencil, and nothing about
+a hint completes anything. Leave `hint` out of a stencil and there is no
+button.
 
 ## The pass rule
 

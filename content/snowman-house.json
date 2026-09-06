@@ -3,12 +3,40 @@
   "name": "Snowman House",
   "test_mode": false,
   "stencils": [
-    {"id": "piano", "src": "img/snowman-house/piano-stencil.png"},
-    {"id": "guitar", "src": "img/snowman-house/guitar-stencil.png"},
-    {"id": "lantern", "src": "img/snowman-house/lantern-stencil.png"},
-    {"id": "bay-window", "src": "img/snowman-house/bay-window-stencil.png"},
-    {"id": "bathroom", "src": "img/snowman-house/bathroom-stencil.png"},
-    {"id": "picture-wall", "src": "img/snowman-house/picture-wall-stencil.png"},
-    {"id": "stairs", "src": "img/snowman-house/stairs-stencil.png"}
+    {
+      "id": "piano",
+      "src": "img/snowman-house/piano-stencil.png",
+      "hint": "img/snowman-house/piano-stencil-hint.png"
+    },
+    {
+      "id": "guitar",
+      "src": "img/snowman-house/guitar-stencil.png",
+      "hint": "img/snowman-house/guitar-stencil-hint.png"
+    },
+    {
+      "id": "lantern",
+      "src": "img/snowman-house/lantern-stencil.png",
+      "hint": "img/snowman-house/lantern-stencil-hint.png"
+    },
+    {
+      "id": "bay-window",
+      "src": "img/snowman-house/bay-window-stencil.png",
+      "hint": "img/snowman-house/bay-window-stencil-hint.png"
+    },
+    {
+      "id": "bathroom",
+      "src": "img/snowman-house/bathroom-stencil.png",
+      "hint": "img/snowman-house/bathroom-stencil-hint.png"
+    },
+    {
+      "id": "picture-wall",
+      "src": "img/snowman-house/picture-wall-stencil.png",
+      "hint": "img/snowman-house/picture-wall-stencil-hint.png"
+    },
+    {
+      "id": "stairs",
+      "src": "img/snowman-house/stairs-stencil.png",
+      "hint": "img/snowman-house/stairs-stencil-hint.png"
+    }
   ]
 }

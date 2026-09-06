@@ -48,7 +48,7 @@ LEAFLET_FILES = ("leaflet.js", "leaflet.css")
 SLUG = re.compile(r"[a-z0-9-]+")
 
 HUNT_KEYS = ("id", "name", "test_mode", "map", "stencils")
-STENCIL_KEYS = ("id", "src", "clue", "location")
+STENCIL_KEYS = ("id", "src", "clue", "location", "hint")
 MAP_KEYS = ("bounds", "image")
 LOCATION_KEYS = ("lat", "lon")
 SUPABASE_KEYS = ("url", "anon_key")
@@ -120,6 +120,10 @@ INDEX_PAGE = """<!doctype html>
   li a { display: block; padding: 14px 16px; font-size: 1rem; color: var(--ink);
          text-decoration: none; background: var(--panel); border: 1px solid var(--line);
          border-radius: 12px; box-shadow: var(--shadow); }
+  /* The owner's way in to the capture page: small, at the foot, one word. */
+  .foot { margin-top: 32px; text-align: center; font-size: .8rem; }
+  .foot a { color: var(--ink-soft); text-decoration: none; padding: 10px 14px;
+            display: inline-block; }
 </style>
 </head>
 <body>
@@ -128,6 +132,7 @@ INDEX_PAGE = """<!doctype html>
   <ul>
 <!-- HUNTS GO HERE -->
   </ul>
+  <p class="foot"><a href="capture/">Capture</a></p>
 </main>
 </body>
 </html>
@@ -211,6 +216,11 @@ def check_stencil(s, n, seen, images):
 
     check_app_file(s.get("src"), where, "src")
     images.append(s["src"])
+    # The denser stencil the hint button shows, drawn under the real one on
+    # the camera screen; the scorer never reads it.
+    if "hint" in s:
+        check_app_file(s["hint"], where, "hint")
+        images.append(s["hint"])
 
     if "clue" in s:
         clue = s["clue"]
@@ -434,6 +444,7 @@ def build(content_path, out_dir, supabase=None):
     print(f"  {hunt['id']}: {len(stencils)} stencils, "
           f"{sum(1 for s in stencils if 'location' in s)} located, "
           f"{sum(1 for s in stencils if 'clue' in s)} clues, "
+          f"{sum(1 for s in stencils if 'hint' in s)} hints, "
           f"map {'bounds' if 'bounds' in hunt.get('map', {}) else 'image' if 'map' in hunt else 'none'}, "
           f"test mode {'on' if hunt['test_mode'] else 'off'}, "
           f"leaderboard {'on' if supabase else 'off'}")

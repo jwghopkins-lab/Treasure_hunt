@@ -17,6 +17,8 @@
    from the page:
      testMode      true shows Skip
      distanceLine  (lat, lon, acc) => "About 240 m · NE", or "" for nothing
+     hinted        true if the hint was already taken for this stencil
+     onHint        () => void, the hint was taken, inside the tap
      onPass        (how) => void, called once, inside the pass, how is "match" or "skip"
      onClose       () => void, the screen has closed, back or after the pass */
 (function () {
@@ -71,19 +73,25 @@
                 object-fit: contain; background: #000; }
     /* A dark halo round the lines, so they read on a bright wall as well as
        a dark one. Display only: the scorer reads the PNG, not the screen. */
-    #lensstencil { position: absolute; left: 0; top: 0; display: block;
+    #lensstencil, #lenshint { position: absolute; left: 0; top: 0; display: block;
                    pointer-events: none;
                    filter: drop-shadow(0 0 1.5px rgba(0,0,0,.95)) drop-shadow(0 0 1px rgba(0,0,0,.7)); }
+    /* The hint: the same picture with twice as much of it, laid under the
+       real stencil, dimmer, so the lines that count still stand out. */
+    #lenshint { opacity: .55; }
     /* The bar at the very top, the full width. Green, always. */
     #matchbar { position: absolute; left: 0; right: 0; top: env(safe-area-inset-top, 0px);
                 height: 8px; background: rgba(255,255,255,.18); z-index: 3; }
     #matchfill { height: 100%; width: 0; background: #3FBF7F;
                  transition: width .2s linear; }
-    #lensback, #lensskip { position: absolute; top: calc(18px + env(safe-area-inset-top, 0px));
-                           z-index: 4; }
-    #lensback { left: 12px; border: none; background: rgba(0,0,0,.45); color: #fff;
+    #lensback, #lensskip, #lenshintbtn { position: absolute; z-index: 4;
+                           top: calc(18px + env(safe-area-inset-top, 0px)); }
+    #lensback, #lenshintbtn { border: none; background: rgba(0,0,0,.45); color: #fff;
                 width: 44px; height: 44px; border-radius: 999px; font-size: 1.3rem;
                 cursor: pointer; }
+    #lensback { left: 12px; }
+    /* The hint button, top-right: one glyph, one tap, gone once taken. */
+    #lenshintbtn { right: 12px; font-family: Georgia, serif; font-weight: 700; }
     /* Skip. Plain on purpose: it exists only in test mode, and it should never
        look like the thing you are meant to press. */
     #lensskip { right: 12px; border: none; background: none; color: rgba(255,255,255,.85);
@@ -116,9 +124,11 @@
     root.id = "lens";
     root.innerHTML = `
       <video id="lensfeed" autoplay playsinline muted></video>
+      <img id="lenshint" alt="" hidden>
       <img id="lensstencil" alt="">
       <div id="matchbar"><div id="matchfill"></div></div>
       <button id="lensback" aria-label="Back">←</button>
+      <button id="lenshintbtn" aria-label="Hint" hidden>?</button>
       <div id="lensmsg" hidden></div>
       <div id="lensfoot" hidden><div id="lensclue" hidden></div><div id="lensdist" hidden></div></div>
       <button id="lenswash" data-strong hidden>Complete!</button>`;
@@ -127,6 +137,7 @@
     // the finger on iPhone, the page's capture-phase vibration elsewhere.
     q("#lensback").onclick = () => { close(); if (cfg && cfg.opts.onClose) cfg.opts.onClose(); };
     q("#lenswash").onclick = finish;
+    q("#lenshintbtn").onclick = () => showHint(true);
     q("#lensfeed").addEventListener("loadedmetadata", layout);
     q("#lensstencil").addEventListener("load", layout);
     window.addEventListener("resize", () => { if (isOpen()) layout(); });
@@ -141,6 +152,12 @@
     root.classList.add("on");
     const img = q("#lensstencil");
     img.src = stencil.src;
+    // The hint, if the hunt made one: already showing if it was taken on an
+    // earlier opening of this stencil, else behind the button.
+    const hint = q("#lenshint");
+    if (stencil.hint) hint.src = stencil.hint; else hint.removeAttribute("src");
+    hint.hidden = !(stencil.hint && cfg.opts.hinted);
+    q("#lenshintbtn").hidden = !stencil.hint || !!cfg.opts.hinted;
     q("#lensclue").textContent = stencil.clue || "";
     q("#lensclue").hidden = !stencil.clue;
     q("#lensdist").textContent = "";
@@ -154,6 +171,7 @@
     if (cfg.opts.testMode) {
       const skip = el("button", null, "Skip");
       skip.id = "lensskip";
+      skip.style.right = stencil.hint ? "68px" : "12px";
       skip.onclick = () => pass("skip");
       root.appendChild(skip);
     }
@@ -243,10 +261,12 @@
       const t = Math.min(rect.w / img.naturalWidth, rect.h / img.naturalHeight);
       const dw = img.naturalWidth * t, dh = img.naturalHeight * t;
       place = { x: rect.x + (rect.w - dw) / 2, y: rect.y + (rect.h - dh) / 2, w: dw, h: dh };
-      img.style.left = place.x + "px";
-      img.style.top = place.y + "px";
-      img.style.width = place.w + "px";
-      img.style.height = place.h + "px";
+      for (const node of [img, q("#lenshint")]) {
+        node.style.left = place.x + "px";
+        node.style.top = place.y + "px";
+        node.style.width = place.w + "px";
+        node.style.height = place.h + "px";
+      }
     } else {
       place = null;
     }
@@ -276,6 +296,17 @@
   function stopWatch() {
     if (fixWatch !== null && navigator.geolocation) navigator.geolocation.clearWatch(fixWatch);
     fixWatch = null;
+  }
+
+  /* ---- the hint ----
+     The denser stencil appears under the real one and the button goes. It
+     is display only: the scorer keeps reading #lensstencil. The page is
+     told inside the tap, so the cost lands on the clock at once. */
+  function showHint(charge) {
+    if (!cfg || !cfg.stencil.hint) return;
+    q("#lenshint").hidden = false;
+    q("#lenshintbtn").hidden = true;
+    if (charge && cfg.opts.onHint) cfg.opts.onHint();
   }
 
   /* ---- the pass ---- */
@@ -592,7 +623,7 @@
                      recent: match.slow.map((v) => Math.round(v * 10) / 10),
                      workPx: match.workPx, score: match.smooth, best: match.best,
                      on: match.on, off: match.off, since: match.pass.since,
-                     rect, place }
+                     rect, place, hinted: !q("#lenshint").hidden }
                  : { rect, place, score: null };
   }
 

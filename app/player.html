@@ -240,6 +240,8 @@ const SUPABASE = window.SUPABASE || null;
 // empty rather than pointing somewhere the phone is not.
 const ACC_USELESS_M = 75;
 const FETCH_MS = 10000;          // the leaderboard's patience with the network
+// A hint costs this much on the clock, once per stencil, and it stays paid.
+const HINT_MS = 30000;
 const BOARD_LIMIT = 50;
 
 /* ---- state, on the phone ----
@@ -257,18 +259,19 @@ const NAME_KEY = "treasure.name";
 function getName() { try { return localStorage.getItem(NAME_KEY) || ""; } catch { return ""; } }
 function setName(v) { try { localStorage.setItem(NAME_KEY, v); } catch {} }
 
-let STATE = null;      // { startedAt, started: {id: true}, done: {id: ms}, run_id, posted }
+let STATE = null;      // { startedAt, started: {id: true}, done: {id: ms}, hints: {id: true}, run_id, posted }
 let MAP = null;        // the Leaflet map, once the map screen has been opened
 let mapWatch = null;   // a watchPosition, only while the map screen is open
 let lastTick = null;
 
-function freshState() { return { startedAt: null, started: {}, done: {} }; }
+function freshState() { return { startedAt: null, started: {}, done: {}, hints: {} }; }
 function saveState() { if (STATE) LS.set("state", STATE); }
 function loadState() {
   const s = LS.get("state", null);
   if (!s || typeof s !== "object") return freshState();
   s.started = s.started || {};
   s.done = s.done || {};
+  s.hints = s.hints || {};
   if (typeof s.startedAt !== "number") s.startedAt = null;
   return s;
 }
@@ -431,16 +434,20 @@ function fmtTime(ms) {
   return h ? `${h}:${p(m)}:${p(ss)}` : `${m}:${p(ss)}`;
 }
 function allDone() { return HUNT.stencils.every((s) => STATE.done[s.id]); }
+// What the hints taken so far cost, on the clock and on the board alike.
+function penaltyMs() {
+  return HUNT.stencils.filter((s) => STATE.hints[s.id]).length * HINT_MS;
+}
 // The finishing time once every stencil is done: the last pass against the
-// first tap. Null until then.
+// first tap, plus the hints. Null until then.
 function finishMs() {
   if (!STATE.startedAt || !allDone()) return null;
   const last = Math.max(...HUNT.stencils.map((s) => STATE.done[s.id]));
-  return Math.max(0, last - STATE.startedAt);
+  return Math.max(0, last - STATE.startedAt) + penaltyMs();
 }
 function paintClock() {
   const fin = finishMs();
-  const ms = fin != null ? fin : STATE.startedAt ? Date.now() - STATE.startedAt : 0;
+  const ms = fin != null ? fin : STATE.startedAt ? Date.now() - STATE.startedAt + penaltyMs() : 0;
   $("clock").textContent = fmtTime(ms);
 }
 
@@ -515,6 +522,14 @@ function openCamera(s) {
   window.Lens.open(s, {
     testMode: !!HUNT.test_mode,
     distanceLine: s.location ? distanceLineTo(s.location) : null,
+    hinted: !!STATE.hints[s.id],
+    // The hint is paid for once, on the tap, and the clock shows it at once.
+    onHint: () => {
+      if (STATE.hints[s.id]) return;
+      STATE.hints[s.id] = true;
+      saveState();
+      paintClock();
+    },
     onPass: (how) => {
       STATE.done[s.id] = Date.now();
       delete STATE.started[s.id];

@@ -61,6 +61,24 @@ test.describe("the fake camera", () => {
     });
   }
 
+  test("the hint changes nothing for the scorer: the door still passes with it showing", async () => {
+    test.setTimeout(90000);
+    const door = FIX.stencils.find((s) => s.hint);
+    const { browser, page, errors } = await openWithFeed(`fixture-${door.id}.y4m`, "fixture/");
+    try {
+      await page.locator(`#grid .tile[data-id="${door.id}"]`).click();
+      await expect(page.locator("#lens")).toBeVisible();
+      await page.locator("#lenshintbtn").click();
+      await expect(page.locator("#lenshint")).toBeVisible();
+      await expect(page.locator("#lenswash")).toBeVisible({ timeout: 3000 });
+      await expect(page.locator("#lens")).toBeHidden({ timeout: 2500 });
+      await expect(page.locator(`#grid .tile[data-id="${door.id}"]`)).toHaveClass(/passed/);
+      expect(errors).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test("a blank grey feed does not pass in ten seconds", async () => {
     test.setTimeout(60000);
     const { browser, page, errors } = await openWithFeed("grey.y4m", "fixture/");
