@@ -107,8 +107,13 @@ test.describe("the hunt named in HUNT", () => {
       test.setTimeout(90000);
       const photo = ["jpg", "jpeg", "JPG", "png"].map((e) => path.join(ROOT, "photos", SLUG, s.id + "." + e)).find((p) => fs.existsSync(p));
       expect(photo, `photos/${SLUG}/${s.id}.jpg`).toBeTruthy();
+      // The fake camera plays the photograph at the stencil's own size, which
+      // is the photograph resized as the stencil tool resized it: a
+      // full-resolution frame would be a gigabyte of y4m for nothing.
+      const png = fs.readFileSync(path.join(ROOT, "app", s.src));
+      const size = `${png.readUInt32BE(16)}x${png.readUInt32BE(20)}`;
       const y4m = path.join(Y4M, `${SLUG}-${s.id}.y4m`);
-      execFileSync("python3", [path.join(ROOT, "tests", "png2y4m.py"), photo, y4m]);
+      execFileSync("python3", [path.join(ROOT, "tests", "png2y4m.py"), photo, y4m, "--size", size]);
       const browser = await browserWithFeed(y4m);
       const context = await mobileContext(browser);
       const page = await context.newPage();

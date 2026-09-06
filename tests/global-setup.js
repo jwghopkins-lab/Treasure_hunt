@@ -25,6 +25,11 @@ module.exports = async () => {
   py([build, "--capture", path.join(SITE, "capture"), "--supabase", STUB]);
   py([build, "--capture", path.join(SITE, "capture-nosb"), "--no-supabase"]);
   py([build, "--index", path.join(SITE, "index.html"), "content/fixture.json"]);
+  // A real hunt, by name, for feed.spec.js's pass of every stencil against
+  // its own photograph: HUNT=<slug> npx playwright test feed.spec.js
+  if (process.env.HUNT) {
+    py([build, `content/${process.env.HUNT}.json`, path.join(SITE, process.env.HUNT), "--supabase", STUB]);
+  }
 
   // The fake camera's pictures: a blank grey frame, and every fixture
   // photograph at its own portrait size.
