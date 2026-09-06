@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Cut a stencil from a photograph.
 
+    python3 pipeline/stencil.py photos/<slug>/*.jpg --out app/img/<slug>
     python3 pipeline/stencil.py photos/<slug>/*.jpg \\
         --keep 0.066 --speck 60 --long 800 --out app/img/<slug>
 
@@ -21,8 +22,13 @@ gravel, foliage) survives the threshold as scattered specks while an outline
 survives as one long piece. The lines are then thickened by one pixel to the
 two or three the scorer's masks expect. Strong outlines make the stencil,
 fine detail does not, and the preview written beside each PNG is where you
-find out: a stencil is good when a person could tell what it is. Too much
-texture: raise --speck first, then lower --keep, then ask for another photo.
+find out: a stencil is good when a person could tell what it is.
+
+Left to itself the tool chooses --speck per photograph: the limit rises
+until most of what survives is strokes rather than specks. It says what it
+chose, and it says when a photograph is mostly texture, too sparse, or too
+dark to be a good subject: those are the ones to take again. Give --speck
+to fix it by hand; --keep is 0.066 unless given.
 
 For each photograph this writes <id>-stencil.png and <id>-stencil-preview.jpg
 into --out and prints one JSON stencil entry to stdout, for pasting into the
@@ -125,12 +131,8 @@ def threshold(mag, w, h, keep):
     list of 0/1 the size of the frame. Strictly above, so a frame with no
     gradient at all keeps nothing rather than everything.
 
-    The quantile is taken over, and only ever set within, the pixels whose
-    Sobel saw a blurred neighbour on every side: two pixels in from the
-    edge. The blur is not computed on the one-pixel border, so the Sobel
-    one pixel in sees a black frame and reports a strong edge all the way
-    round the picture, blank or not. The player's frame has that ring too,
-    and a stencil that carried it would score a match on any view."""
+    The quantile is taken over, and only ever set within, the pixels two
+    in from the edge, where the Sobel had a full neighbourhood to read."""
     inner = [mag[y * w + x] for y in range(2, h - 2) for x in range(2, w - 2)]
     mask = [0] * (w * h)
     if not inner:
@@ -146,18 +148,19 @@ def threshold(mag, w, h, keep):
     return mask
 
 
-def drop_specks(mask, w, h, speck):
-    """Clear every 8-connected component of set pixels with fewer than
-    `speck` pixels, in place. A plain stack, not recursion: an outline is
-    one component thousands of pixels long and would blow the stack."""
+def components(mask, w, h):
+    """The 8-connected components of the set pixels, each a list of pixel
+    indices, largest first. A plain stack, not recursion: an outline is one
+    component thousands of pixels long and would blow the stack. The mask
+    is left as it was."""
     n = w * h
-    # 1 is set and not yet visited, 2 is set and visited, so the visit needs
-    # no second list the size of the frame.
+    seen = bytearray(n)
+    out = []
     for start in range(n):
-        if mask[start] != 1:
+        if not mask[start] or seen[start]:
             continue
         comp = [start]
-        mask[start] = 2
+        seen[start] = 1
         stack = [start]
         while stack:
             i = stack.pop()
@@ -170,16 +173,70 @@ def drop_specks(mask, w, h, speck):
                     if xx < 0 or xx >= w:
                         continue
                     j = yy * w + xx
-                    if mask[j] == 1:
-                        mask[j] = 2
+                    if mask[j] and not seen[j]:
+                        seen[j] = 1
                         stack.append(j)
                         comp.append(j)
-        if len(comp) < speck:
-            for i in comp:
-                mask[i] = 0
-    for i in range(n):
-        if mask[i]:
+        out.append(comp)
+    out.sort(key=len, reverse=True)
+    return out
+
+
+def from_components(comps, w, h):
+    mask = [0] * (w * h)
+    for comp in comps:
+        for i in comp:
             mask[i] = 1
+    return mask
+
+
+def drop_specks(mask, w, h, speck):
+    """Clear every 8-connected component of set pixels with fewer than
+    `speck` pixels, in place."""
+    kept = [c for c in components(mask, w, h) if len(c) >= speck]
+    mask[:] = from_components(kept, w, h)
+
+
+# Choosing the speck limit by looking, the way the handoff has the owner do
+# it, but done by the tool: raise the limit until most of what survives is
+# strokes rather than specks. The numbers came from the first hunt: a door
+# or a piano is a few components thousands of pixels long, a wicker basket
+# or a cluttered cellar is hundreds under a hundred and fifty. The keep
+# fraction is not climbed to make up for a sparse result: more of a textured
+# picture is more texture, merged into blobs big enough to pass for strokes,
+# and a plain subject already has its strong edges at 0.066. A sparse or a
+# textured result is reported instead, because the answer is another
+# photograph.
+SPECKS = [60, 80, 100, 130, 160, 200, 250, 300]
+STROKE_PX = 300          # a component at least this long is a stroke, not a speck
+STROKE_SHARE = 0.6       # the share of kept pixels that should be in strokes
+SPARSE = 0.035           # under this set fraction the scorer has little to hold
+DIM = 60                 # mean brightness, of 255, under which a room is dark
+
+
+def choose(mag, w, h, keep, speck):
+    """The mask, the speck used, and any notes about the photograph. A speck
+    given as None is chosen here; keep is as given."""
+    interior = max(1, (w - 4) * (h - 4))
+    specks = [speck] if speck is not None else SPECKS
+    comps = components(threshold(mag, w, h, keep), w, h)
+    notes = []
+    result = None
+    for sp in specks:
+        kept = [c for c in comps if len(c) >= sp]
+        total = sum(len(c) for c in kept)
+        share = (sum(len(c) for c in kept if len(c) >= STROKE_PX) / total) if total else 0.0
+        result = (sp, kept, total / interior, share)
+        if share >= STROKE_SHARE:
+            break
+    sp, kept, frac, share = result
+    if share < STROKE_SHARE and speck is None:
+        notes.append(f"mostly texture even at speck {sp} ({share:.0%} of its lines are strokes); "
+                     "consider another photograph")
+    elif frac < SPARSE:
+        notes.append(f"sparse: {frac:.1%} of the frame before thickening; "
+                     "a subject with bigger, plainer edges would give the camera more to hold")
+    return from_components(kept, w, h), sp, notes
 
 
 def src_for(out, png):
@@ -211,11 +268,15 @@ def make(photo, out, keep, speck, long):
     im = fit_long(im, long)
     w, h = im.size
 
-    mag = edge_map(pixels(im), w, h)
-    mask = threshold(mag, w, h, keep)
-    drop_specks(mask, w, h, speck)
+    px = pixels(im)
+    mag = edge_map(px, w, h)
+    mask, speck, notes = choose(mag, w, h, keep, speck)
     if not any(mask):
         print(f"{photo}: no edges found, the stencil is empty", file=sys.stderr)
+    # A dark room is noise to the camera whatever the stencil says.
+    mean = sum(0.299 * r + 0.587 * g + 0.114 * b for r, g, b in px) / len(px)
+    if mean < DIM:
+        notes.append(f"dim (mean brightness {mean:.0f} of 255); the camera will see noise in a dark room")
 
     # Thicken by one pixel. MaxFilter on a 0/255 image gives back only 0
     # and 255, so the alpha it becomes is a clean mask with no half-values
@@ -238,7 +299,9 @@ def make(photo, out, keep, speck, long):
     # The set fraction after thickening, at a glance: a stencil that is
     # mostly texture is a big number before it is a bad picture.
     filled = lines.histogram()[255] / (w * h)
-    print(f"wrote {png} {w}x{h}, {filled:.1%} set", file=sys.stderr)
+    print(f"wrote {png} {w}x{h}, {filled:.1%} set (keep {keep:g}, speck {speck})", file=sys.stderr)
+    for note in notes:
+        print(f"note: {photo}: {note}", file=sys.stderr)
 
     preview = im.convert("RGBA")
     preview.alpha_composite(stencil)
@@ -254,12 +317,13 @@ def main(argv=None):
         description="Cut stencils from photographs for a treasure hunt.")
     ap.add_argument("photos", nargs="+", type=Path, help="the photographs")
     # 0.066 rather than the handoff's 0.06: a tenth more of the scene's edges,
-    # after the first hunt showed the stencils needed more of their surroundings
-    # to say where to stand.
+    # after the first hunt showed the stencils needed more of their
+    # surroundings to say where to stand. The speck limit, left out, is chosen
+    # per photograph (see choose): from 60 up until the lines are strokes.
     ap.add_argument("--keep", type=float, default=0.066,
                     help="fraction of the frame's interior to keep (default 0.066)")
-    ap.add_argument("--speck", type=int, default=60,
-                    help="drop blobs with fewer pixels than this (default 60)")
+    ap.add_argument("--speck", type=int, default=None,
+                    help="drop blobs with fewer pixels than this (chosen per photo, from 60 up, if left out)")
     ap.add_argument("--long", type=int, default=800,
                     help="resize so the long side is this many px (default 800)")
     ap.add_argument("--out", type=Path, required=True,
@@ -267,7 +331,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
     if not 0 < args.keep <= 1:
         ap.error("--keep must be above 0 and at most 1")
-    if args.speck < 0:
+    if args.speck is not None and args.speck < 0:
         ap.error("--speck must not be negative")
     if args.long < 5:
         ap.error("--long must be at least 5, so the frame has an interior")

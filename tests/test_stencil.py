@@ -160,3 +160,76 @@ class IdTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChoiceTest(unittest.TestCase):
+    """The speck limit chosen per photograph when --speck is left out."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.out = Path(self.tmp.name) / "out"
+        self.photos = Path(self.tmp.name) / "photos"
+        self.photos.mkdir()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def shapes(self):
+        """A door-like drawing: a few long outlines on a plain ground."""
+        im = Image.new("RGB", (300, 400), (200, 196, 188))
+        d = ImageDraw.Draw(im)
+        d.rectangle([60, 40, 240, 380], outline=(40, 30, 30), width=5)
+        d.rectangle([90, 80, 210, 200], outline=(40, 30, 30), width=4)
+        d.rectangle([90, 230, 210, 350], outline=(40, 30, 30), width=4)
+        d.ellipse([215, 200, 235, 220], fill=(40, 30, 30))
+        p = self.photos / "shapes.jpg"
+        im.save(p, quality=92)
+        return p
+
+    def texture(self):
+        """Wicker, more or less: a dense grid of small dark blobs and
+        nothing else, which is specks all the way down."""
+        import random
+        rnd = random.Random(7)
+        im = Image.new("RGB", (300, 400), (190, 160, 110))
+        d = ImageDraw.Draw(im)
+        for y in range(10, 390, 9):
+            for x in range(10, 290, 9):
+                if rnd.random() < 0.85:
+                    d.ellipse([x, y, x + 4, y + 3], fill=(90, 60, 30))
+        p = self.photos / "wicker.jpg"
+        im.save(p, quality=92)
+        return p
+
+    def chosen(self, proc):
+        m = [line for line in proc.stderr.splitlines() if line.startswith("wrote") and "speck" in line]
+        self.assertEqual(len(m), 1, proc.stderr)
+        return int(m[0].rsplit("speck ", 1)[1].rstrip(")"))
+
+    def test_clean_outlines_keep_the_default_limit(self):
+        proc = run(self.shapes(), "--out", self.out)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.chosen(proc), 60)
+        self.assertNotIn("note:", proc.stderr)
+
+    def test_texture_raises_the_limit_and_is_reported(self):
+        proc = run(self.texture(), "--out", self.out)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertGreater(self.chosen(proc), 60)
+        self.assertIn("note:", proc.stderr)
+        self.assertTrue("texture" in proc.stderr or "sparse" in proc.stderr, proc.stderr)
+
+    def test_an_explicit_speck_is_used_as_given(self):
+        proc = run(self.texture(), "--speck", "75", "--out", self.out)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.chosen(proc), 75)
+        self.assertNotIn("mostly texture", proc.stderr)
+
+    def test_a_dark_photograph_is_reported(self):
+        im = Image.new("RGB", (300, 400), (20, 18, 16))
+        ImageDraw.Draw(im).rectangle([60, 40, 240, 380], outline=(70, 60, 55), width=5)
+        p = self.photos / "dark.jpg"
+        im.save(p, quality=92)
+        proc = run(p, "--out", self.out)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("dim", proc.stderr)

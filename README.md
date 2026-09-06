@@ -62,12 +62,19 @@ the Supabase connector:
 Download each `path` from the bucket's public URL to `photos/<slug>/<id>.jpg`,
 take the clue and, where the accuracy is at most 75 m, the position. Then:
 
-    python3 pipeline/stencil.py photos/<slug>/*.jpg --keep 0.066 --speck 60 --long 800 --out app/img/<slug>
+    python3 pipeline/stencil.py photos/<slug>/*.jpg --out app/img/<slug>
+    python3 pipeline/sheet.py content/<slug>.json sheet.jpg
 
-Look at every `*-stencil-preview.jpg`. A photo with too much texture
-(foliage, gravel, brick) gives a stencil that is noise: raise `--speck`,
-lower `--keep`, or take another photo. A stencil is good when a person could
-tell what it is. Write `content/<slug>.json`:
+Left to itself the tool keeps 0.066 of each frame's edges and chooses the
+speck limit per photograph, raising it until most of what survives is
+strokes rather than specks, and says what it chose. It also says when a
+photograph is a poor subject: `mostly texture` (wicker, gravel, foliage),
+`sparse` (too few edges to hold), or `dim` (a dark room is noise to the
+camera). Those are the ones to take again, with a subject that has big
+permanent edges two to four metres away in decent light, and nothing that
+moves. `--keep` and `--speck` still fix the recipe by hand. Look at every
+`*-stencil-preview.jpg`, or at the sheet: a stencil is good when a person
+could tell what it is. Write `content/<slug>.json`:
 
     {
       "id": "trafalgar",
