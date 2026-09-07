@@ -1,0 +1,52 @@
+{
+  "id": "snowman2",
+  "name": "Snowman 2",
+  "test_mode": false,
+  "stencils": [
+    {
+      "id": "shot-1",
+      "src": "img/snowman2/shot-1-stencil.png",
+      "hint": "img/snowman2/shot-1-stencil-hint.png"
+    },
+    {
+      "id": "shot-2",
+      "src": "img/snowman2/shot-2-stencil.png",
+      "hint": "img/snowman2/shot-2-stencil-hint.png"
+    },
+    {
+      "id": "shot-3",
+      "src": "img/snowman2/shot-3-stencil.png",
+      "hint": "img/snowman2/shot-3-stencil-hint.png"
+    },
+    {
+      "id": "shot-4",
+      "src": "img/snowman2/shot-4-stencil.png",
+      "hint": "img/snowman2/shot-4-stencil-hint.png"
+    },
+    {
+      "id": "shot-5",
+      "src": "img/snowman2/shot-5-stencil.png",
+      "hint": "img/snowman2/shot-5-stencil-hint.png"
+    },
+    {
+      "id": "shot-6",
+      "src": "img/snowman2/shot-6-stencil.png",
+      "hint": "img/snowman2/shot-6-stencil-hint.png"
+    },
+    {
+      "id": "shot-7",
+      "src": "img/snowman2/shot-7-stencil.png",
+      "hint": "img/snowman2/shot-7-stencil-hint.png"
+    },
+    {
+      "id": "shot-8",
+      "src": "img/snowman2/shot-8-stencil.png",
+      "hint": "img/snowman2/shot-8-stencil-hint.png"
+    },
+    {
+      "id": "shot-9",
+      "src": "img/snowman2/shot-9-stencil.png",
+      "hint": "img/snowman2/shot-9-stencil-hint.png"
+    }
+  ]
+}
