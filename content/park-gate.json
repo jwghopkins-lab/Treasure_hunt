@@ -1,0 +1,34 @@
+{
+  "id": "park-gate",
+  "name": "Park gate",
+  "test_mode": false,
+  "stencils": [
+    {
+      "id": "shot-1",
+      "src": "img/park-gate/shot-1-stencil.png",
+      "clue": "Outside",
+      "hint": "img/park-gate/shot-1-stencil-hint.png"
+    },
+    {
+      "id": "shot-2",
+      "src": "img/park-gate/shot-2-stencil.png",
+      "clue": "Outside",
+      "hint": "img/park-gate/shot-2-stencil-hint.png"
+    },
+    {
+      "id": "shot-3",
+      "src": "img/park-gate/shot-3-stencil.png",
+      "hint": "img/park-gate/shot-3-stencil-hint.png"
+    },
+    {
+      "id": "shot-4",
+      "src": "img/park-gate/shot-4-stencil.png",
+      "hint": "img/park-gate/shot-4-stencil-hint.png"
+    },
+    {
+      "id": "shot-5",
+      "src": "img/park-gate/shot-5-stencil.png",
+      "hint": "img/park-gate/shot-5-stencil-hint.png"
+    }
+  ]
+}
