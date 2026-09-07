@@ -97,18 +97,23 @@
               color: var(--good); }
   #owntime { margin-top: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
              font-size: 1.2rem; font-variant-numeric: tabular-nums; }
-  #board { list-style: none; margin: 16px auto 0; max-width: 360px; text-align: left; }
-  #board li { display: flex; gap: 10px; align-items: baseline; padding: 7px 10px;
-              border-top: 1px solid var(--line); font-size: .95rem; }
-  #board li:first-child { border-top: none; }
-  #board .rank { flex: 0 0 2em; text-align: right; color: var(--ink-soft);
-                 font-variant-numeric: tabular-nums; }
-  #board .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-                white-space: nowrap; }
-  #board .when { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-                 font-variant-numeric: tabular-nums; }
-  #board li.me { color: var(--accent); font-weight: 700; }
-  #board li.me .rank { color: var(--accent); }
+  #board, #fullboard { list-style: none; margin: 16px auto 0; max-width: 360px; text-align: left; }
+  #board li, #fullboard li { display: flex; gap: 10px; align-items: baseline; padding: 7px 10px;
+                             border-top: 1px solid var(--line); font-size: .95rem; }
+  #board li:first-child, #fullboard li:first-child { border-top: none; }
+  #board .rank, #fullboard .rank { flex: 0 0 2em; text-align: right; color: var(--ink-soft);
+                                   font-variant-numeric: tabular-nums; }
+  #board .who, #fullboard .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+                                 white-space: nowrap; }
+  #board .when, #fullboard .when { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                                   font-variant-numeric: tabular-nums; }
+  #board li.me, #fullboard li.me { color: var(--accent); font-weight: 700; }
+  #board li.me .rank, #fullboard li.me .rank { color: var(--accent); }
+  /* How far a run has got. The good colour is on this cell alone, so a
+     finished row and the player's own row can both be marked at once. */
+  #fullboard .far { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                    font-variant-numeric: tabular-nums; color: var(--ink-soft); }
+  #fullboard li.fin .far { color: var(--good); font-weight: 700; }
 
   /* The name screen, once. */
   #s-name .spacer { flex: 1; }
@@ -143,6 +148,19 @@
          padding: 6%; display: flex; }
   .pop img { width: 100%; height: 100%; object-fit: contain; }
   .leaflet-container { font-family: inherit; }
+
+  /* The board screen: every run of this hunt, full screen over the main one,
+     shaped like the map screen and scrolling, because fifty rows do not fit. */
+  #s-board { position: fixed; inset: 0; z-index: 30; background: var(--paper); display: none;
+             overflow-y: auto;
+             padding: calc(68px + env(safe-area-inset-top, 0px)) 12px
+                      calc(20px + env(safe-area-inset-bottom, 0px)); }
+  #s-board.on { display: block; }
+  #boardback { position: fixed; left: 12px; top: calc(12px + env(safe-area-inset-top, 0px));
+               z-index: 1100; border: none; background: var(--panel); color: var(--ink);
+               width: 44px; height: 44px; border-radius: 999px; font-size: 1.3rem;
+               cursor: pointer; box-shadow: var(--shadow); }
+  #fullboard { margin-top: 0; max-width: 400px; }
 
   /* The tick. iOS Safari has no vibration API, and it ticks a native switch
      control only when a finger lands on the switch itself: toggled from
@@ -208,6 +226,11 @@
         <path d="M9 4v13M15 6.5v13"/>
       </svg>
     </button>
+    <button class="menubtn" id="boardbtn" aria-label="Board" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M5 20v-5M12 20v-9M19 20v-13"/>
+      </svg>
+    </button>
     <button class="menubtn" id="menubtn" aria-label="Menu">⋯</button>
   </header>
   <div id="topbar"><div class="mbar"><div id="progressfill" class="mfill"></div></div></div>
@@ -223,6 +246,13 @@
   <div id="mapview"></div>
   <button id="mapback" aria-label="Back">←</button>
   <div id="qrow" hidden></div>
+</div>
+
+<!-- How far everyone has got, at any time. Only with the config: without a
+     Supabase there is nothing to read and no button to open it. -->
+<div id="s-board">
+  <button id="boardback" aria-label="Back">←</button>
+  <ol id="fullboard"></ol>
 </div>
 
 <div id="modal"><div class="card" id="modalcard"></div></div>
@@ -243,6 +273,9 @@ const FETCH_MS = 10000;          // the leaderboard's patience with the network
 // A hint costs this much on the clock, once per stencil, and it stays paid.
 const HINT_MS = 30000;
 const BOARD_LIMIT = 50;
+// The ms column on the server is checked against a day, and a run left open
+// overnight is past it: the row is sent capped rather than refused.
+const MAX_POST_MS = 86400000;
 
 /* ---- state, on the phone ----
    Namespaced by hunt, so two hunts served from the same site do not read each
@@ -445,11 +478,14 @@ function finishMs() {
   const last = Math.max(...HUNT.stencils.map((s) => STATE.done[s.id]));
   return Math.max(0, last - STATE.startedAt) + penaltyMs();
 }
-function paintClock() {
+// The number the clock shows: the finishing time once every stencil is done,
+// the running time before that, the hints counted in either way.
+function shownMs() {
   const fin = finishMs();
-  const ms = fin != null ? fin : STATE.startedAt ? Date.now() - STATE.startedAt + penaltyMs() : 0;
-  $("clock").textContent = fmtTime(ms);
+  if (fin != null) return fin;
+  return STATE.startedAt ? Date.now() - STATE.startedAt + penaltyMs() : 0;
 }
+function paintClock() { $("clock").textContent = fmtTime(shownMs()); }
 
 /* ---- the main screen ---- */
 function tileState(s) {
@@ -484,9 +520,9 @@ function renderMain() {
     grid.appendChild(b);
   }
   const n = HUNT.stencils.length;
-  const passed = HUNT.stencils.filter((s) => STATE.done[s.id]).length;
-  $("progressfill").style.width = (n ? 100 * passed / n : 0) + "%";
+  $("progressfill").style.width = (n ? 100 * passedCount() / n : 0) + "%";
   $("mapbtn").hidden = !HUNT.map;
+  $("boardbtn").hidden = !SUPABASE;
   paintClock();
   paintFinish();
 }
@@ -538,6 +574,7 @@ function openCamera(s) {
       // from the match loop. Chrome allows a vibration outside a tap once the
       // page has been tapped, which it has. A skip is not a success.
       if (how === "match") lastTick = haptic(true);
+      postProgress();
       if (allDone() && SUPABASE) syncBoard();
     },
     onClose: () => renderMain(),
@@ -607,6 +644,106 @@ function paintBoard(rows) {
     li.innerHTML = `<span class="rank">${i + 1}</span>`
       + `<span class="who">${escapeHtml(r.name || "")}</span>`
       + `<span class="when">${fmtTime(Number(r.ms) || 0)}</span>`;
+    ol.appendChild(li);
+  });
+}
+
+/* ---- the board screen ----
+   How far everyone has got, which is a different question from the finish
+   board's fastest fifty: one row per run of this hunt, still walking or not.
+   The run's own row is upserted on every pass and once on load, so a phone
+   part of the way through is on the board too. */
+let runs = null;           // what the last fetch found, kept while a new one flies
+let runsFetch = null;      // the fetch in flight, if any
+
+function passedCount() { return HUNT.stencils.filter((s) => STATE.done[s.id]).length; }
+// Nothing is said about a run that has not begun. A failure is silent: the
+// pass, the clock and the tick do not wait on the network, and the next pass
+// or the next load sends the row again. Only the board's own read waits, and
+// it waits for the post either way.
+// The board shows one row per phone per hunt, so the id it is keyed by is
+// not the run's: Start over clears the state and with it run_id, and a
+// second attempt would otherwise leave the first one standing on the board
+// for ever under the same name. Completions keeps its own run_id per
+// attempt, because a second attempt is a second time.
+function boardId() {
+  let id = LS.get("board", null);
+  if (!id) { id = uuid(); LS.set("board", id); }
+  return id;
+}
+
+function postProgress() {
+  if (!SUPABASE || !STATE.startedAt || !STATE.run_id) return Promise.resolve();
+  // updated_at travels in the body because the column's default only fires on
+  // the insert: an upsert of a row that is already there would otherwise keep
+  // the first post's time for ever, and nothing would say the row was stale.
+  return sbFetch("/rest/v1/progress", {
+    method: "POST",
+    headers: { "Content-Type": "application/json",
+               Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({ run_id: boardId(), hunt: HUNT.id, name: getName(),
+                           done: passedCount(), total: HUNT.stencils.length,
+                           ms: Math.min(shownMs(), MAX_POST_MS),
+                           updated_at: new Date().toISOString() }),
+  }).catch(() => {});
+}
+
+function openBoard() {
+  $("s-board").classList.add("on");
+  // The player looking at the board is the one most likely to be missing from
+  // it: a run that has started and passed nothing has no row until the next
+  // load. So the run says where it is, and the read waits for it, which also
+  // puts the player's own time on the board as the clock has it now.
+  fetchRuns(postProgress());
+}
+function closeBoard() { $("s-board").classList.remove("on"); }
+// The screen shows what the last fetch found while a new one is in flight,
+// and a fetch that fails leaves it as it was, empty the first time. No
+// spinner and nothing said, as the finish board does it.
+function fetchRuns(after) {
+  if (!SUPABASE || runsFetch) return;
+  runsFetch = (async () => {
+    try {
+      if (after) await after;
+      // Ordered on the server as well as here: the limit is fifty rows, and
+      // without an order they would be fifty arbitrary ones, so a hunt with
+      // more runs than that could leave the leader off the board altogether.
+      const res = await sbFetch(`/rest/v1/progress?hunt=eq.${encodeURIComponent(HUNT.id)}`
+                                + `&select=run_id,name,done,total,ms`
+                                + `&order=done.desc,ms.asc&limit=${BOARD_LIMIT}`);
+      if (res.ok) {
+        const rows = await res.json();
+        if (Array.isArray(rows)) { runs = rows; paintRuns(); }
+      }
+    } catch { /* the rows stay as they were */ }
+    runsFetch = null;
+  })();
+}
+const runDone = (r) => Number(r.done) || 0;
+const runTotal = (r) => Number(r.total) || 0;
+const runMs = (r) => Number(r.ms) || 0;
+const runFinished = (r) => runTotal(r) > 0 && runDone(r) >= runTotal(r);
+// Every finished run above every unfinished one; the finished by their time,
+// the rest by how far they have got and then by their time.
+function orderRuns(rows) {
+  return rows.slice().sort((a, b) => {
+    if (runFinished(a) !== runFinished(b)) return runFinished(a) ? -1 : 1;
+    if (!runFinished(a) && runDone(a) !== runDone(b)) return runDone(b) - runDone(a);
+    return runMs(a) - runMs(b);
+  });
+}
+function paintRuns() {
+  const ol = $("fullboard");
+  ol.innerHTML = "";
+  orderRuns(runs || []).slice(0, BOARD_LIMIT).forEach((r, i) => {
+    const li = document.createElement("li");
+    li.className = "row" + (runFinished(r) ? " fin" : "")
+                 + (r.run_id && r.run_id === boardId() ? " me" : "");
+    if (r.run_id) li.dataset.run = r.run_id;
+    li.innerHTML = `<span class="rank">${i + 1}</span>`
+      + `<span class="who">${escapeHtml(r.name || "")}</span>`
+      + `<span class="far">${runDone(r)}/${runTotal(r)}</span>`
+      + `<span class="when">${fmtTime(runMs(r))}</span>`;
     ol.appendChild(li);
   });
 }
@@ -820,8 +957,11 @@ armTicks(document.body);          // the buttons that were here before the obser
 $("menubtn").onclick = openMenu;
 $("mapbtn").onclick = openMap;
 $("mapback").onclick = closeMap;
+$("boardbtn").onclick = openBoard;
+$("boardback").onclick = closeBoard;
 $("modal").onclick = (ev) => { if (ev.target === $("modal")) closeModal(); };
-window.__th = { state: () => STATE, map: () => MAP, hunt: HUNT, supabase: SUPABASE };
+window.__th = { state: () => STATE, map: () => MAP, hunt: HUNT, supabase: SUPABASE,
+                boardId: () => boardId() };
 
 (() => {
   if (!HUNT) {
@@ -835,6 +975,9 @@ window.__th = { state: () => STATE, map: () => MAP, hunt: HUNT, supabase: SUPABA
   setInterval(paintClock, 1000);
   if (SUPABASE && !getName()) showName();
   else showMain();
+  // A run already going has its row brought up to date, which also sends one
+  // that never got through on the walk itself.
+  postProgress();
 })();
 </script>
 </body>

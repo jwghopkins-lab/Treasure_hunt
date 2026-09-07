@@ -39,3 +39,28 @@ create policy "the capture page may upload" on storage.objects
   for insert to anon with check (bucket_id = 'captures');
 -- public read, unguessable names: the path carries sixteen random hex
 -- characters, and nothing lists the bucket.
+
+-- Added after the first hunt was walked: who is where, so the board can be
+-- read before anybody has finished. One row per run, upserted by the phone as
+-- stencils pass (POST with Prefer: resolution=merge-duplicates). The
+-- completions table keeps the finishing times; this keeps the live state.
+create table progress (
+  run_id uuid primary key,
+  hunt text not null check (length(hunt) between 1 and 40),
+  name text not null check (length(name) between 1 and 24),
+  done integer not null check (done between 0 and 100),
+  total integer not null check (total between 1 and 100),
+  ms integer check (ms between 0 and 86400000),
+  updated_at timestamptz not null default now()
+);
+create index on progress (hunt, done desc, ms);
+alter table progress enable row level security;
+create policy "anyone may post progress" on progress
+  for insert to anon with check (true);
+-- A run is identified by a uuid made on the phone, so an update is only ever
+-- of a row whose id the phone already knows: guessing one is the whole of
+-- what it would take, and the checks bound what a row can say.
+create policy "anyone may move their run on" on progress
+  for update to anon using (true) with check (true);
+create policy "anyone may read the board" on progress
+  for select to anon using (true);

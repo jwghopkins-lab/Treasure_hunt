@@ -28,6 +28,8 @@ narrative, gates, questions and gestures was left behind.
     app/vendor/leaflet/          Leaflet 1.9.4, the one dependency, vendored
     photos/<slug>/               the photographs; gitignored, except the fixture's
     pipeline/stencil.py          photograph -> stencil (needs Pillow)
+    pipeline/from_captures.py    the capture rows -> photographs, stencils and a hunt file
+    pipeline/sheet.py            a contact sheet of a hunt's stencils on their photographs
     pipeline/build.py            validate a hunt and bake it (standard library only)
     supabase/schema.sql          the tables, policies and bucket, as applied
     tests/                       the Playwright suites, the y4m tool, the python tests
@@ -54,13 +56,50 @@ in `content/`, the deploy, and a curl of each deployed URL.
 ## Making a hunt
 
 Take six to nine photographs with the capture page, in portrait, on a phone
-like the ones that will play, under the hunt's slug. Then, in a session with
-the Supabase connector:
+like the ones that will play, with the hunt's slug typed once and a clue
+where one is wanted. Then, in a session with the Supabase connector:
 
-    select * from captures where hunt = '<slug>' order by taken_at
+    select path, clue, lat, lon, accuracy from captures
+        where hunt = '<slug>' order by taken_at
 
-Download each `path` from the bucket's public URL to `photos/<slug>/<id>.jpg`,
-take the clue and, where the accuracy is at most 75 m, the position. Then:
+Read the rows back to the owner, so a bad shot can be dropped and a clue or a
+position corrected, and give each one an id: that is the manifest, a JSON
+list in the order the stencils should appear.
+
+    [{"id": "front-door",
+      "path": "snowman2/1788730518182-b16f6425d77404b1.jpg",
+      "clue": "Where the milk is left.",
+      "lat": 51.47, "lon": -0.1, "accuracy": 12.3}]
+
+Only `id` and `path` are required; the id names the photograph, the stencil
+and the tile. Then dispatch the hunt workflow with it:
+
+    gh workflow run hunt.yml --ref main -f slug=<slug> -f name="<Hunt Name>" \
+        -f manifest="$(cat manifest.json)" -f locations=true
+    gh workflow run pages.yml --ref main
+
+The runner fetches each photograph from the bucket to `photos/<slug>/<id>.jpg`,
+cuts its stencil with the recipe below, writes `content/<slug>.json` with the
+clues as they were typed and, with `locations=true`, a location for every fix
+at most 75 m wide (a coordinate typed into the manifest by hand has no
+accuracy to be judged by, and is taken as it is) and the map's corners round
+them; then it runs the python tests and the fake-camera pass of every new
+stencil against its own photograph, and commits the stencils and the hunt
+file, and nothing else. It is a runner and not the session because a session
+may have the Supabase connector and still have no route to the storage
+bucket, and the runner has both. Pages does not follow by itself: a push made
+with `GITHUB_TOKEN` does not start another workflow, which is why the second
+line is there.
+
+The same tool runs by hand, against a directory of photographs or a `file://`
+URL instead of the project, which is how it is tested:
+
+    python3 pipeline/from_captures.py --slug <slug> --name "<Hunt Name>" \
+        --manifest manifest.json --base <directory>
+
+Photographs that arrive as files rather than through the capture page take
+the older route: put them in `photos/<slug>/` named as the stencils should be
+named, and cut them directly.
 
     python3 pipeline/stencil.py photos/<slug>/*.jpg --out app/img/<slug>
     python3 pipeline/sheet.py content/<slug>.json sheet.jpg
@@ -72,9 +111,10 @@ photograph is a poor subject: `mostly texture` (wicker, gravel, foliage),
 `sparse` (too few edges to hold), or `dim` (a dark room is noise to the
 camera). Those are the ones to take again, with a subject that has big
 permanent edges two to four metres away in decent light, and nothing that
-moves. `--keep` and `--speck` still fix the recipe by hand. Look at every
-`*-stencil-preview.jpg`, or at the sheet: a stencil is good when a person
-could tell what it is. Write `content/<slug>.json`:
+moves. `--keep` and `--speck` still fix the recipe by hand, and the hunt
+workflow takes both as inputs for the photograph that needs it. Look at
+every `*-stencil-preview.jpg`, or at the sheet: a stencil is good when a
+person could tell what it is. Then write `content/<slug>.json`:
 
     {
       "id": "trafalgar",
@@ -129,6 +169,33 @@ exactly the edges the camera will see. The search is wider, ±5 px and five
 scales from 0.85 to 1.15, 45 evaluations, because photographs from the
 camera app lean on the scale search and the first hunt showed ±10% was
 tight.
+
+## The leaderboard
+
+Two boards read the same Supabase project. The one under `Congratulations!`
+is the fastest fifty finishing times, from `completions`, and it is there
+only when a walk is done. The button in the header, the three bars beside
+the map button and the `⋯`, opens the other at any time: one row per run of
+this hunt, from `progress`, showing how far each has got.
+
+    progress(run_id uuid primary key, hunt text, name text,
+             done int, total int, ms int, updated_at timestamptz)
+
+The phone upserts its own row on every pass and once on each load of a run
+that has begun, with `Prefer: resolution=merge-duplicates`, so a run keeps
+one row however many times it is sent. `ms` is the number the clock shows,
+hints and all, which on the last pass is the finishing time: a finished
+run's row is final. A post that fails is silent and nothing waits on it —
+the next pass or the next load sends it again — so the pass, the clock and
+the tick are never held up by the network. Without a config there is no
+button and no request.
+
+Finished runs sort above unfinished ones, by time; the rest by how far they
+have got and then by time. A finished row carries its `6/6` in the good
+colour, and the player's own row is in the accent colour, as the finish
+board marks it. The board is fetched when the screen opens; while a fetch is
+in flight the screen shows what the last one found, and a fetch that fails
+leaves it as it was, with no spinner and no error text.
 
 ## The hint
 

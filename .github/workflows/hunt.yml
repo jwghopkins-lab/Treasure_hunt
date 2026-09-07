@@ -1,0 +1,153 @@
+name: hunt
+
+# Why this exists: the session that builds a hunt cannot reach the storage
+# bucket — its sandbox has no route to *.supabase.co — and a runner has. So
+# the session reads the captures rows through the Supabase connector, turns
+# them into the manifest below, and dispatches this; the runner fetches the
+# photographs, cuts the stencils, runs the tests and commits the hunt.
+#
+# The push is made with GITHUB_TOKEN, and a push made with GITHUB_TOKEN does
+# not start another workflow, so the pages run does not follow by itself.
+# Dispatch it afterwards:
+#
+#     gh workflow run hunt.yml --ref main -f slug=... -f name=... -f manifest=...
+#     gh workflow run pages.yml --ref main
+
+on:
+  workflow_dispatch:
+    inputs:
+      slug:
+        description: The hunt's slug, which is the folder the capture page uploaded to
+        required: true
+      name:
+        description: The hunt's name, as the title bar shows it
+        required: true
+      manifest:
+        description: 'The rows as a JSON list: id and path, plus clue, lat, lon and accuracy where there are any'
+        required: true
+      locations:
+        description: Keep the fixes as the stencils' locations, and put a map round them
+        type: boolean
+        default: false
+      test:
+        description: Score every new stencil against its own photograph before committing
+        type: boolean
+        default: true
+      keep:
+        description: Fraction of each frame's edges to keep, if the tool's own choice needs overriding
+        required: false
+      speck:
+        description: Drop blobs smaller than this, if the tool's own choice needs overriding
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: hunt
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # The build is standard library; the stencil tool is the one thing here
+      # that needs an install.
+      - name: Install Pillow for the stencil tool
+        run: pip install Pillow
+
+      # The manifest is written outside the checkout: it is an input, not a
+      # file of the repository, and nothing should be able to commit it.
+      - name: Write the manifest
+        env:
+          MANIFEST: ${{ inputs.manifest }}
+        run: printf '%s' "$MANIFEST" > "$RUNNER_TEMP/manifest.json"
+
+      - name: Fetch the photographs and cut the stencils
+        env:
+          SLUG: ${{ inputs.slug }}
+          NAME: ${{ inputs.name }}
+          LOCATIONS: ${{ inputs.locations }}
+          KEEP: ${{ inputs.keep }}
+          SPECK: ${{ inputs.speck }}
+        run: |
+          places=--no-locations
+          if [ "$LOCATIONS" = "true" ]; then places=; fi
+          # Left out, the tool chooses the speck limit per photograph and
+          # keeps its default share of the edges; these are here for the
+          # photograph that needs its recipe corrected by hand.
+          tune=
+          if [ -n "$KEEP" ]; then tune="$tune --keep $KEEP"; fi
+          if [ -n "$SPECK" ]; then tune="$tune --speck $SPECK"; fi
+          python3 pipeline/from_captures.py \
+            --slug "$SLUG" --name "$NAME" \
+            --manifest "$RUNNER_TEMP/manifest.json" \
+            --base https://ntgsksywctywwzzaaffq.supabase.co \
+            $places $tune
+
+      - name: The python tests
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+
+      - uses: actions/setup-node@v4
+        if: inputs.test
+        with:
+          node-version: "22"
+      - name: Install the Playwright suites
+        if: inputs.test
+        run: |
+          cd tests
+          npm ci
+          npx playwright install --with-deps chromium
+      # Every stencil of the new hunt against the photograph it was cut from,
+      # in the fake camera, before anything is committed: a stencil that
+      # cannot pass against its own photograph will never pass in the street.
+      - name: Score every new stencil against its own photograph
+        if: inputs.test
+        env:
+          SLUG: ${{ inputs.slug }}
+        run: |
+          cd tests
+          HUNT="$SLUG" npx playwright test feed.spec.js
+
+      - name: Commit the stencils and the hunt file, and nothing else
+        env:
+          SLUG: ${{ inputs.slug }}
+          NAME: ${{ inputs.name }}
+        run: |
+          git add "app/img/$SLUG" "content/$SLUG.json"
+          # The photographs give the answers away and the previews are for
+          # looking at, so neither is ever committed. Both are gitignored, and
+          # this is where that is checked rather than believed.
+          bad=0
+          while IFS= read -r line; do
+            staged="${line:0:1}"
+            path="${line:3}"
+            if [ "$staged" = " " ] || [ "$staged" = "?" ]; then
+              echo "left where it is: $line"
+              continue
+            fi
+            case "$path" in
+              *-stencil-preview.jpg) echo "a preview is not shipped: $path"; bad=1 ;;
+              "app/img/$SLUG/"*|"content/$SLUG.json") ;;
+              *) echo "not part of this hunt: $path"; bad=1 ;;
+            esac
+          done < <(git status --porcelain)
+          if [ "$bad" != 0 ]; then
+            echo "nothing was committed"
+            exit 1
+          fi
+          if git diff --cached --quiet; then
+            echo "the hunt is already in the repository, unchanged"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "$NAME, cut from its captures"
+          git push origin HEAD:main
+          echo "pushed. Pages does not follow a push made with GITHUB_TOKEN:"
+          echo "  gh workflow run pages.yml --ref main"
