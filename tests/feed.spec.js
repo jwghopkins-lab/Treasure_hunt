@@ -1,5 +1,7 @@
 // The scorer, with a real picture in the fake camera: the stencil's own
-// photograph passes within three seconds, a blank grey frame never does.
+// photograph passes within three seconds, a blank grey frame never does, and
+// a stencil that is alpha 255 all through scores what it scored before the
+// alpha carried a weight.
 const { test, expect } = require("@playwright/test");
 const { execFileSync } = require("child_process");
 const fs = require("fs");
@@ -33,9 +35,18 @@ async function expectPass(page, id, within) {
   await page.waitForFunction(() => { const v = document.getElementById("lensfeed"); return v && v.videoWidth > 0; });
   const size = await page.evaluate(() => { const v = document.getElementById("lensfeed"); return [v.videoWidth, v.videoHeight]; });
   const t0 = Date.now();
-  await expect(page.locator("#lenswash")).toBeVisible({ timeout: within });
+  // The pass stops the match loop, so a reading taken after it is empty:
+  // what the stencil scored has to be kept as it goes past. The log below is
+  // read to judge a hunt, and a hunt is judged on the number.
+  let stats = null;
+  await expect
+    .poll(async () => {
+      const st = await page.evaluate(() => window.Lens.stats());
+      if (st && st.score != null) stats = st;
+      return page.locator("#lenswash").isVisible();
+    }, { timeout: within, intervals: [100] })
+    .toBe(true);
   const took = Date.now() - t0;
-  const stats = await page.evaluate(() => window.Lens.stats());
   await expect(page.locator("#lens")).toBeHidden({ timeout: 2500 });
   await expect(page.locator(`#grid .tile[data-id="${id}"]`)).toHaveClass(/passed/);
   return { took, size, stats };
@@ -73,6 +84,53 @@ test.describe("the fake camera", () => {
       await expect(page.locator("#lenswash")).toBeVisible({ timeout: 3000 });
       await expect(page.locator("#lens")).toBeHidden({ timeout: 2500 });
       await expect(page.locator(`#grid .tile[data-id="${door.id}"]`)).toHaveClass(/passed/);
+      expect(errors).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test("an all-255 stencil scores against its photograph exactly what the plain mean scored", async () => {
+    test.setTimeout(90000);
+    const s = FIX.stencils[0];
+    const { browser, page, errors } = await openWithFeed(`fixture-${s.id}.y4m`, "fixture/");
+    try {
+      await page.locator(`#grid .tile[data-id="${s.id}"]`).click();
+      await expect(page.locator("#lens")).toBeVisible();
+      await page.waitForFunction(() => { const v = document.getElementById("lensfeed"); return v && v.videoWidth > 0; });
+      // The loop is stopped first: this stencil passes in about a second, and
+      // a pass closes the screen.
+      await page.evaluate(() => window.Lens.fakeScore(0));
+      // The same picture at alpha 255 wherever it has any, so the test says
+      // what the alpha is instead of depending on how the tool cut it.
+      await page.evaluate(() => new Promise((done) => {
+        const img = document.getElementById("lensstencil");
+        const c = document.createElement("canvas");
+        c.width = img.naturalWidth; c.height = img.naturalHeight;
+        const ctx = c.getContext("2d");
+        ctx.drawImage(img, 0, 0);
+        const d = ctx.getImageData(0, 0, c.width, c.height);
+        for (let j = 3; j < d.data.length; j += 4) if (d.data[j]) d.data[j] = 255;
+        ctx.putImageData(d, 0, 0);
+        img.addEventListener("load", done, { once: true });
+        img.src = c.toDataURL();
+      }));
+      const r = await page.evaluate(() => window.Lens.bothWays());
+      // A stencil with no strength to carry is not weighed at all: `weights`
+      // false says the scorer built none and took the plain mean, which is
+      // the arithmetic that shipped, rather than a weighted mean that ought
+      // to come to the same number. Which pixels that mean is taken over is
+      // the other half of the guarantee, and it is pinned where it matters:
+      // camera.spec.js holds Park gate's ten masks to the pixel. This
+      // fixture will be recut like any other stencil, so what it is worth
+      // here is the part a mask cannot show — that a real photograph, played
+      // into a real camera, still scores well clear of the top pass line.
+      expect(r.weights).toBe(false);
+      expect(r.minW).toBe(1);
+      expect(r.maxW).toBe(1);
+      expect(r.weighted).toBe(r.flat);
+      expect(r.n).toBeGreaterThan(0);
+      expect(r.weighted).toBeGreaterThan(0.3);
       expect(errors).toEqual([]);
     } finally {
       await browser.close();
@@ -142,7 +200,11 @@ test.describe("the hunt named in HUNT", () => {
         await page.goto(`${SLUG}/`);
         await expect(page.locator("#s-main")).toBeVisible();
         const r = await expectPass(page, s.id, 3000);
-        console.log(`${SLUG}/${s.id}: passed in ${r.took} ms at ${r.size.join("x")}, score ${r.stats.score && r.stats.score.toFixed(2)}, ${r.stats.ms} ms per evaluation at ${r.stats.workPx} px`);
+        const st = r.stats || {};
+        console.log(`${SLUG}/${s.id}: passed in ${r.took} ms at ${r.size.join("x")}`
+                    + `, smoothed ${st.score == null ? "?" : st.score.toFixed(3)}`
+                    + `, best ${st.best == null ? "?" : st.best.toFixed(3)}`
+                    + `, ${st.ms == null ? "?" : st.ms} ms per evaluation at ${st.workPx} px`);
       } finally {
         await browser.close();
       }

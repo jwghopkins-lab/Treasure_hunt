@@ -3,7 +3,7 @@
 
     python3 pipeline/stencil.py photos/<slug>/*.jpg --out app/img/<slug>
     python3 pipeline/stencil.py photos/<slug>/*.jpg \\
-        --keep 0.066 --speck 60 --long 800 --out app/img/<slug>
+        --keep 0.12 --speck 60 --long 800 --out app/img/<slug>
 
 Not part of the build, and the one thing in pipeline/ that needs an install:
 Pillow, to read the photograph and write the PNG. No numpy. The build only
@@ -24,17 +24,39 @@ two or three the scorer's masks expect. Strong outlines make the stencil,
 fine detail does not, and the preview written beside each PNG is where you
 find out: a stencil is good when a person could tell what it is.
 
+A kept pixel is not merely on: its alpha is its own edge strength, so a
+faint line counts a little where a strong one counts fully, and the scorer
+takes the mean under the stencil weighted by that alpha. That is what pays
+for keeping so much more of the frame than an on-or-off stencil could carry
+without the weak edges drowning the strong ones. A stencil cut before this,
+alpha 255 on every kept pixel, scores exactly as it always did: every weight
+is then one and the weighted mean is the plain mean.
+
 Left to itself the tool chooses --speck per photograph: the limit rises
 until most of what survives is strokes rather than specks. It says what it
-chose, and it says when a photograph is mostly texture, too sparse, or too
-dark to be a good subject: those are the ones to take again. Give --speck
-to fix it by hand; --keep is 0.066 unless given.
+chose, and it says when a photograph is sparse or dim. Give --speck to fix
+it by hand; --keep is 0.12 unless given.
+
+What it will not tell you any more is that a photograph is mostly texture.
+Keeping 0.12 of the frame instead of 0.066 merges the specks into
+components long enough to pass for strokes: over the twenty-five
+photographs of the three hunts the climb now runs on two — foliage against
+a dry-stone wall, and the contour lines of a map — and the note fires on
+none, the wicker basket it was written for included, whose lines went from
+half strokes to three quarters. Whether a stencil is worth walking to is
+pipeline/audit.py's to say now, and it says it by scoring the stencil
+against the photographs rather than by the shape of the lines.
 
 For each photograph this writes <id>-stencil.png, <id>-stencil-hint.png (the
 same with twice as much kept, for the hint button) and
 <id>-stencil-preview.jpg into --out, and prints one JSON stencil entry to
 stdout, for pasting into the hunt file. Everything that is not an entry goes to stderr, so the output can
 be redirected and pasted whole.
+
+The two PNGs are palette images with a tRNS chunk rather than RGBA: one
+colour at sixteen alphas needs a byte a pixel, not four, and the hunt's main
+screen loads every stencil of the hunt at once. Same pixels, two fifths off
+the bytes.
 """
 
 import argparse
@@ -48,7 +70,7 @@ from PIL import Image, ImageFilter, ImageOps
 BASE = Path(__file__).resolve().parent.parent
 APP = BASE / "app"
 
-ORANGE = (255, 61, 0, 255)      # every kept pixel; everything else is (0, 0, 0, 0)
+ORANGE = (255, 61, 0)      # the colour of every kept pixel; its alpha is the edge strength
 
 # sqrt(2) x 4 x 255, the Sobel ceiling, as in lens.js. It fixes the width of
 # the histogram's bins, so it has to be the same number there and here.
@@ -205,9 +227,18 @@ def drop_specks(mask, w, h, speck):
 # or a cluttered cellar is hundreds under a hundred and fifty. The keep
 # fraction is not climbed to make up for a sparse result: more of a textured
 # picture is more texture, merged into blobs big enough to pass for strokes,
-# and a plain subject already has its strong edges at 0.066. A sparse or a
-# textured result is reported instead, because the answer is another
+# and a plain subject already has its strong edges at the default keep. A
+# sparse result is reported instead, because the answer is another
 # photograph.
+#
+# STROKE_PX and STROKE_SHARE were read off the first hunt when a stencil kept
+# 0.066 of the frame. At 0.12 the same photographs' lines merge — the wicker
+# basket's longest component goes from 2,942 pixels to 14,052 and its stroke
+# share from 0.51 to 0.74, the cluttered cellar's from 1,321 to 4,652 and
+# 0.49 to 0.80 — so the climb runs on two of the three hunts' twenty-five
+# photographs and none of them is called textured. They are left where they
+# are: moving them by eye would change what is cut for the hunts about to be
+# recut, and the question they were guessing at is the one audit.py measures.
 SPECKS = [60, 80, 100, 130, 160, 200, 250, 300]
 STROKE_PX = 300          # a component at least this long is a stroke, not a speck
 STROKE_SHARE = 0.6       # the share of kept pixels that should be in strokes
@@ -241,13 +272,75 @@ def choose(mag, w, h, keep, speck):
     return from_components(kept, w, h), sp, notes
 
 
-def orange(mask, w, h):
+# The alpha is a weight in a mean over thousands of pixels, so it needs
+# nothing like 256 levels, and a byte that takes every value compresses far
+# worse than one that takes sixteen: quantising costs the score nothing
+# measurable and takes a stencil from about 93 KB to about 55 KB, which is
+# the difference between a hunt that opens on one bar of signal and one that
+# does not.
+ALPHA_LEVELS = 16
+# The share of each frame's edges a stencil keeps. 0.12 rather than the 0.066
+# a binary stencil could afford: counting every kept pixel the same, more of
+# the frame meant more faint edges at the weight of strong ones, and the mean
+# under the mask fell as fast as the mask grew. Weighted, a faint pixel costs
+# almost nothing.
+#
+# The number is pipeline/audit.py's, over the seventeen photographs of the two
+# hunts whose photographs are in hand, cut four ways: at each keep flat and
+# weighted. Attainable median, worst attainable, worst confusion:
+#
+#     Snowman House   0.066 flat  0.630  0.536  0.200
+#                     0.066 wtd   0.649  0.557  0.216
+#                     0.12  flat  0.683  0.592  0.186
+#                     0.12  wtd   0.725  0.633  0.188
+#     Park gate       0.066 flat  0.498  0.191  0.259
+#                     0.066 wtd   0.515  0.192  0.258
+#                     0.12  flat  0.532  0.210  0.175
+#                     0.12  wtd   0.568  0.215  0.163
+#
+# The keep is the larger lever and the weighting is worth about half as much
+# again on top of it. Both hunts were swept further, and past 0.12 the
+# attainable score keeps climbing while the confusion climbs with it: at 0.2
+# Snowman House confuses at 0.260 and Park gate at 0.312, over the lowest
+# pass line, which is a stencil that passes in the wrong place. 0.12 is where
+# attainable is highest with confusion still at its lowest.
+#
+# It is not free for every photograph. Of the seventeen, fifteen improve and
+# two lose: Park gate's shot-1 (0.265 to 0.215) and shot-7 (0.316 to 0.279),
+# which are the two with the most going on beside their lines and were the
+# two worst before. Keeping more of a cluttered frame keeps more clutter.
+# Neither is worth walking to at any keep, and the answer to those is
+# another photograph, which is what audit.py's floor says.
+KEEP = 0.12
+
+
+def orange(mask, mag, w, h, weighted=True):
     """The mask as the stencil PNG: thickened by one pixel, every kept pixel
-    exactly ORANGE and everything else fully transparent. MaxFilter on a
-    0/255 image gives back only 0 and 255, so the alpha is a clean mask
-    with no half-values for the scorer to threshold."""
+    exactly ORANGE at an alpha that is its own normalised edge strength, and
+    everything else fully transparent. The scorer divides that alpha by 255
+    and weighs the pixel by it, which is why the floor is 1 and not 0: a
+    kept pixel whose strength rounds away would otherwise drop out of the
+    mask it was chosen for.
+
+    The thickening runs over the alpha rather than over a flat mask, so the
+    pixel a line grows into takes the strongest strength beside it instead
+    of a value of its own. Nothing is antialiased into existence either way:
+    a maximum filter leaves zero wherever its whole neighbourhood is zero,
+    so a pixel neither kept nor grown into stays fully transparent."""
+    # putdata takes a sequence shorter than the frame without a word and
+    # leaves the rest of it at zero, so a caller that pairs a mask with the
+    # magnitudes of some other frame would get the bottom of its stencil
+    # quietly blanked and a PNG that still keeps the format contract.
+    if len(mask) != w * h or len(mag) != w * h:
+        raise ValueError(f"orange() wants {w * h} mask and magnitude values for a "
+                         f"{w}x{h} frame, not {len(mask)} and {len(mag)}")
+    step = 255 / ALPHA_LEVELS
     lines = Image.new("L", (w, h))
-    lines.putdata([255 if m else 0 for m in mask])
+    if weighted:
+        lines.putdata([max(1, round(round(255 * min(1, m) / step) * step)) if k else 0
+                       for k, m in zip(mask, mag)])
+    else:
+        lines.putdata([255 if k else 0 for k in mask])
     lines = lines.filter(ImageFilter.MaxFilter(3))
     return Image.merge("RGBA", (
         lines.point(lambda a: ORANGE[0] if a else 0),
@@ -255,6 +348,36 @@ def orange(mask, w, h):
         lines.point(lambda a: ORANGE[2] if a else 0),
         lines,
     ))
+
+
+def save_png(img, path):
+    """An RGBA image written as small as it will go without moving a pixel.
+
+    A stencil is one colour at a handful of alphas — sixteen levels and
+    nothing in between — so it goes out as a palette image with a tRNS
+    chunk: one byte a pixel instead of four, and the filters have far less
+    to chew on. That is about two fifths off a stencil, which matters
+    because the hunt's main screen loads every one of them at once and a
+    ten-stencil hunt on one bar of signal is a wait a player can feel.
+
+    tRNS carries each palette entry's alpha exactly, so the alpha the scorer
+    reads back is the alpha the tool wrote — this is a smaller file and not a
+    smaller stencil. Anything with more colours than a palette holds, which
+    no stencil this tool cuts has, is written as it came.
+    """
+    counts = img.getcolors(256)
+    if counts is None:
+        img.save(path, optimize=True)
+        return
+    # Transparent first, so index 0 is what a reader that ignores tRNS shows.
+    colours = sorted((c for _, c in counts), key=lambda c: (c[3], c[:3]))
+    index = {bytes(c): i for i, c in enumerate(colours)}
+    raw = img.tobytes()
+    pal = Image.frombytes("P", img.size,
+                          bytes(index[raw[i:i + 4]] for i in range(0, len(raw), 4)))
+    flat = [v for c in colours for v in c[:3]]
+    pal.putpalette(flat + [0] * (768 - len(flat)))
+    pal.save(path, optimize=True, transparency=bytes(c[3] for c in colours))
 
 
 def src_for(out, png):
@@ -290,9 +413,10 @@ def make(photo, out, keep, speck, long):
     mag = edge_map(px, w, h)
     mask, speck, notes = choose(mag, w, h, keep, speck)
     # The hint: the same picture with twice as much of it kept, at the same
-    # speck limit, for the hint button to lay under the real stencil. The
-    # scorer never reads it, so what it costs in texture is the player's to
-    # take or leave.
+    # speck limit and weighted the same way, so its extra lines are drawn as
+    # faint as they are, for the hint button to lay under the real stencil.
+    # The scorer never reads it, so what it costs in texture is the player's
+    # to take or leave.
     hint = threshold(mag, w, h, min(1.0, keep * HINT_TIMES))
     drop_specks(hint, w, h, speck)
     if not any(mask):
@@ -302,19 +426,24 @@ def make(photo, out, keep, speck, long):
     if mean < DIM:
         notes.append(f"dim (mean brightness {mean:.0f} of 255); the camera will see noise in a dark room")
 
-    stencil = orange(mask, w, h)
+    stencil = orange(mask, mag, w, h)
     lines = stencil.split()[3]
 
     sid = stencil_id(photo)
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     png = out / f"{sid}-stencil.png"
-    stencil.save(png, optimize=True)
+    save_png(stencil, png)
     hint_png = out / f"{sid}-stencil-hint.png"
-    orange(hint, w, h).save(hint_png, optimize=True)
+    # The hint is for the player's eye and the scorer never reads it, so it
+    # carries no weights: a flat alpha compresses to a fifth of a weighted
+    # one, and doubling what is kept has already doubled the ink.
+    save_png(orange(hint, mag, w, h, weighted=False), hint_png)
     # The set fraction after thickening, at a glance: a stencil that is
-    # mostly texture is a big number before it is a bad picture.
-    filled = lines.histogram()[255] / (w * h)
+    # mostly texture is a big number before it is a bad picture. Every pixel
+    # with any alpha at all counts here, faint ones included, because every
+    # one of them is in the mask the scorer reads.
+    filled = (w * h - lines.histogram()[0]) / (w * h)
     print(f"wrote {png} {w}x{h}, {filled:.1%} set (keep {keep:g}, speck {speck})", file=sys.stderr)
     for note in notes:
         print(f"note: {photo}: {note}", file=sys.stderr)
@@ -332,12 +461,17 @@ def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Cut stencils from photographs for a treasure hunt.")
     ap.add_argument("photos", nargs="+", type=Path, help="the photographs")
-    # 0.066 rather than the handoff's 0.06: a tenth more of the scene's edges,
-    # after the first hunt showed the stencils needed more of their
-    # surroundings to say where to stand. The speck limit, left out, is chosen
-    # per photograph (see choose): from 60 up until the lines are strokes.
-    ap.add_argument("--keep", type=float, default=0.066,
-                    help="fraction of the frame's interior to keep (default 0.066)")
+    # 0.12, where an on-or-off stencil could only afford 0.066. Counting
+    # every kept pixel the same, keeping more of the frame meant keeping more
+    # of the faint edges at the same weight as the strong ones, and the mean
+    # under the mask fell as fast as the mask grew. Weighted, a faint pixel
+    # costs little and still says where to stand: over the nine Snowman House
+    # photographs the median attainable score went from 0.522 to 0.649 and the
+    # worst from 0.293 to 0.374, while the worst score in the wrong place moved
+    # only from 0.271 to 0.286. The speck limit, left out, is chosen per
+    # photograph (see choose): from 60 up until the lines are strokes.
+    ap.add_argument("--keep", type=float, default=KEEP,
+                    help="fraction of the frame's interior to keep (default 0.12)")
     ap.add_argument("--speck", type=int, default=None,
                     help="drop blobs with fewer pixels than this (chosen per photo, from 60 up, if left out)")
     ap.add_argument("--long", type=int, default=800,

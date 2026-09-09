@@ -298,8 +298,8 @@ def main(argv=None):
                     help="the hunt file to write (default content/<slug>.json)")
     ap.add_argument("--no-locations", action="store_true",
                     help="leave every location out, and the map with them")
-    ap.add_argument("--keep", type=float, default=0.066,
-                    help="fraction of each frame's interior to keep (default 0.066)")
+    ap.add_argument("--keep", type=float, default=stencil.KEEP,
+                    help=f"fraction of each frame's interior to keep (default {stencil.KEEP})")
     ap.add_argument("--speck", type=int, default=None,
                     help="drop blobs with fewer pixels than this (chosen per photo if left out)")
     ap.add_argument("--long", type=int, default=800,

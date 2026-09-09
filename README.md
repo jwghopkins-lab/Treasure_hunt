@@ -28,6 +28,7 @@ narrative, gates, questions and gestures was left behind.
     app/vendor/leaflet/          Leaflet 1.9.4, the one dependency, vendored
     photos/<slug>/               the photographs; gitignored, except the fixture's
     pipeline/stencil.py          photograph -> stencil (needs Pillow)
+    pipeline/audit.py            the stencils scored against their photographs (needs Pillow)
     pipeline/from_captures.py    the capture rows -> photographs, stencils and a hunt file
     pipeline/sheet.py            a contact sheet of a hunt's stencils on their photographs
     pipeline/build.py            validate a hunt and bake it (standard library only)
@@ -104,7 +105,7 @@ named, and cut them directly.
     python3 pipeline/stencil.py photos/<slug>/*.jpg --out app/img/<slug>
     python3 pipeline/sheet.py content/<slug>.json sheet.jpg
 
-Left to itself the tool keeps 0.066 of each frame's edges and chooses the
+Left to itself the tool keeps 0.12 of each frame's edges and chooses the
 speck limit per photograph, raising it until most of what survives is
 strokes rather than specks, and says what it chose. It also says when a
 photograph is a poor subject: `mostly texture` (wicker, gravel, foliage),
@@ -136,6 +137,32 @@ small or indoor hunt, shown as a picture to pan and pinch with no location
 read at all. `test_mode` puts a Skip on the camera screen and Test the tick
 in the menu; make it false before anybody plays for real.
 
+Then measure what was cut, against the photographs it was cut from:
+
+    python3 pipeline/audit.py content/<slug>.json --photos photos/<slug>
+
+Two scores per stencil. The attainable score is what it gets against its own
+photograph, which is the most a player standing in the right place can ever
+get, since nobody holds a phone as steady as the photograph does; the
+confusion is the best it reaches against any other photograph of the hunt,
+which is what a player gets for standing somewhere else. Beside them are the
+on and off means behind the attainable score, and off is the number that
+governs the outcome: it is the edge activity in the ring just beside the
+lines, and a stencil scores only where its lines are busier than their
+surroundings. A photograph with busy surroundings — a plain door in a
+cluttered hall, railings against foliage — scores badly however strong its
+own edges are. On the first hunt walked, the two stencils that would not pass
+where they were taken are the two lowest attainable scores of that house's
+nine photographs, and the worst confusion of the nine is one of them.
+
+It exits 1 naming the stencils if an attainable score is under `--floor`
+(0.35 by default) or a confusion reaches 0.20, the lowest pass line. A
+stencil under the floor is answered with another photograph, not with another
+`--keep`: no recipe takes the clutter out from beside the lines. `--floor 0`
+measures a hunt without judging it, for a hunt already in the field or a cut
+being compared with the one before it, and `--json` keeps the numbers to
+compare with.
+
 Then run the tests, including the fake-camera pass for the new hunt:
 
     cd tests && HUNT=<slug> npx playwright test feed.spec.js
@@ -151,6 +178,17 @@ into `tests/.site`. `tests/png2y4m.py` turns a photograph into the y4m file
 the fake camera plays, so a stencil can be tested against its own
 photograph. `Lens.fakeScore(v)` paints the bar as if the smoothed score were
 `v`; it feeds nothing else and is there for the tests.
+
+`audit.spec.js` is the one that keeps `pipeline/audit.py` honest. The audit
+decides whether a hunt is worth walking to, and it does that by writing
+`lens.js`'s arithmetic out again in Python; a copy that drifts would pass
+hunts the camera cannot read and refuse ones it can. So every fixture
+photograph is scored twice, once by the audit and once by `lens.js` itself
+with the photograph in the fake camera, and the two have to agree. They
+agree to 0.008 on the fixture hunt and to 0.008 over the forty-nine
+photograph-and-stencil pairs of Snowman House, the audit reading high every
+time by about 0.007, which is PIL's resize of a JPEG against the browser's
+draw of a decoded video frame. Read an audit number as about 0.007 kind.
 
 To try the built site on a phone use the Pages URL: the camera needs a
 secure context, and a file path is not one.

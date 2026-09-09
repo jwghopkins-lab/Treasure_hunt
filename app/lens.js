@@ -343,7 +343,14 @@
      just beside them: if the edges are no more likely under the stencil than
      next to it, the score is zero; if every edge nearby is under it, one. A
      small search in shift and scale forgives a phone standing a little off,
-     and a camera whose crop is a little different from the photograph's. */
+     and a camera whose crop is a little different from the photograph's.
+
+     Under the lines the mean is weighted by the stencil's own alpha, which
+     the tool writes as the strength of the edge it cut there, so a faint line
+     counts a little rather than not at all. The ring is not weighted. A
+     stencil cut before the tool carried strength has alpha 255 on every kept
+     pixel and so nothing to weigh by: no weights are built for it at all, and
+     what runs under its lines is the plain mean the game has always taken. */
   function startMatch() {
     stopMatch();
     match = {
@@ -382,7 +389,7 @@
     let best = { score: 0, on: 0, off: 0 };
     for (const mk of masks) {
       for (const dy of MATCH_SHIFTS) for (const dx of MATCH_SHIFTS) {
-        const on = meanAt(E, mk.M, w, h, dx, dy);
+        const on = meanAt(E, mk.M, w, h, dx, dy, mk.W);
         const off = meanAt(E, mk.R, w, h, dx, dy);
         const score = Math.max(0, (on - off) / (on + off + 0.001));
         if (score > best.score) best = { score, on, off };
@@ -479,10 +486,11 @@
     return mag;
   }
 
-  // The stencil's alpha where it is drawn, at three scales, each thresholded,
-  // thickened by two pixels into the mask M, then thickened by six more and
-  // hollowed out into the ring R. Cached against the placement: while the
-  // phone holds still, only the frame is recomputed.
+  // The stencil where it is drawn, at three scales, each thresholded,
+  // thickened by two pixels into the mask M, with a weight per pixel in W
+  // when the stencil carries strength and no W at all when it does not, then
+  // thickened by six more and hollowed out into the ring R. Cached against
+  // the placement: while the phone holds still, only the frame is recomputed.
   //
   // The threshold and the first thickening happen at the stencil's own
   // resolution, not the working frame's. A 3 px line on a 600 px stencil is
@@ -490,6 +498,25 @@
   // after the shrink leaves nothing: the line's alpha never reaches 128. So
   // the PNG's own pixels are thresholded, where it is exact, thickened by the
   // native equivalent of two working pixels, and only then drawn small.
+  //
+  // Which is why the shape and the strength are shrunk separately. The shrink
+  // mixes coverage into whatever it is given: a working pixel half over a
+  // line comes back at half alpha whether the line is strong or faint. The
+  // shape says which pixels are the stencil's, at the same half-covered
+  // threshold as ever; dividing the strength by it takes the coverage back
+  // out and leaves the edge strength the tool wrote, which is the weight.
+  //
+  // That threshold is also why the mask here is not "every pixel with any
+  // alpha", which is the rule written down for the stencil's own pixels,
+  // where a pixel either was cut or was not. This is after the shrink, where
+  // a pixel a hundredth covered by a line has an alpha too, and letting those
+  // in would grow every mask in the game by a rim of pixels that are almost
+  // not there. Half covered it stays.
+  //
+  // A stencil whose alpha is only 0 or 255 has nothing to weigh by: there is
+  // one shape, it is shrunk once, and its mask carries no weights at all, so
+  // the mean under it is the plain mean the game has always taken rather
+  // than a weighted mean that ought to come to the same thing.
   function stencilMasks(img, w, h, k) {
     const key = [w, h, rect.x, rect.y, rect.w, rect.h, img.offsetWidth, img.offsetHeight, img.src].join(",");
     match.rebuilt = !(match.masks && match.maskKey === key);
@@ -509,52 +536,93 @@
       // Not laid out yet: no size, no mask, and nothing to score this tick.
       if (!(perNative > 0)) { match.maskKey = ""; return []; }
       const thick = nativeMask(img, Math.min(64, Math.max(1, Math.ceil(2 / perNative))));
-      ctx.clearRect(0, 0, w, h);
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.scale(sc * k, sc * k);
-      ctx.drawImage(thick, -elW / 2, -elH / 2, elW, elH);
-      ctx.restore();
-      const a = ctx.getImageData(0, 0, w, h).data;
+      const small = (from) => {
+        ctx.clearRect(0, 0, w, h);
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(sc * k, sc * k);
+        ctx.drawImage(from, -elW / 2, -elH / 2, elW, elH);
+        ctx.restore();
+        return ctx.getImageData(0, 0, w, h).data;
+      };
+      const shape = small(thick.shape);
+      const strength = thick.flat ? null : small(thick.strength);
       const n = w * h;
       const M = new Uint8Array(n);
-      for (let i = 0, j = 3; i < n; i++, j += 4) M[i] = a[j] >= 128 ? 1 : 0;
+      for (let i = 0, j = 3; i < n; i++, j += 4) M[i] = shape[j] >= 128 ? 1 : 0;
       const D = dilate(M, w, h, 6);
-      const Mi = [], Ri = [];
-      for (let i = 0; i < n; i++) {
-        if (M[i]) Mi.push(i);
+      const Mi = [], Wi = [], Ri = [];
+      for (let i = 0, j = 3; i < n; i++, j += 4) {
+        if (M[i]) { Mi.push(i); if (strength) Wi.push(Math.min(1, strength[j] / shape[j])); }
         else if (D[i]) Ri.push(i);
       }
-      out.push({ M: Int32Array.from(Mi), R: Int32Array.from(Ri) });
+      out.push({ M: Int32Array.from(Mi), W: strength ? Float32Array.from(Wi) : null,
+                 R: Int32Array.from(Ri) });
     }
     match.masks = out;
     match.maskKey = key;
     return out;
   }
 
-  // The stencil's alpha at its own size, thresholded at 128 and thickened by
-  // r pixels, as an opaque white shape on nothing that drawImage can shrink.
-  // Cached by radius: only a change of layout asks for another.
+  // The stencil's alpha at its own size, thickened by r pixels, as opaque
+  // white shapes on nothing that drawImage can shrink: `shape` is every
+  // thickened pixel at full alpha, `strength` the same pixels at the alpha
+  // the tool wrote there. Cached by radius: only a change of layout asks for
+  // another.
+  //
+  // A thickened pixel takes the strongest alpha near it rather than merely
+  // being set, so thickening a faint line does not invent a strong one. The
+  // two shapes cover exactly the same pixels, because a maximum is above zero
+  // wherever anything near it is.
+  //
+  // A stencil whose alpha is only 0 and 255 — every stencil cut before the
+  // tool carried strength — has no strength to carry: `flat` says so, there
+  // is one canvas, and the scorer takes the unweighted mean it always took.
+  // Making that a matter of which code runs rather than of two canvases
+  // shrinking to the same bytes is the point: the two do shrink alike here,
+  // but "alike" would be Skia's promise on a phone nobody has tested, and a
+  // hunt whose photographs are gone cannot be recut when it is broken.
   function nativeMask(img, r) {
     const key = img.src + "|" + r;
     if (match.native.has(key)) return match.native.get(key);
     const nw = img.naturalWidth, nh = img.naturalHeight;
-    const c = document.createElement("canvas");
-    c.width = nw; c.height = nh;
-    const ctx = c.getContext("2d", { willReadFrequently: true });
+    const shape = document.createElement("canvas");
+    shape.width = nw; shape.height = nh;
+    const ctx = shape.getContext("2d", { willReadFrequently: true });
     ctx.drawImage(img, 0, 0);
     const a = ctx.getImageData(0, 0, nw, nh).data;
     const n = nw * nh;
-    const bin = new Uint8Array(n);
-    for (let i = 0, j = 3; i < n; i++, j += 4) bin[i] = a[j] >= 128 ? 1 : 0;
-    const thick = dilate(bin, nw, nh, r);
-    const out = ctx.createImageData(nw, nh);
-    for (let i = 0, j = 0; i < n; i++, j += 4) {
-      if (thick[i]) { out.data[j] = out.data[j + 1] = out.data[j + 2] = out.data[j + 3] = 255; }
+    const alpha = new Uint8Array(n);
+    let flat = true;
+    for (let i = 0, j = 3; i < n; i++, j += 4) {
+      alpha[i] = a[j];
+      if (a[j] && a[j] !== 255) flat = false;
     }
-    ctx.putImageData(out, 0, 0);
-    match.native.set(key, c);
-    return c;
+    // Flat, and the shape dilation the game has always used is enough: over
+    // 0 and 255 alone the two agree, and that one fills whole runs at a time.
+    const thick = flat ? dilate(alpha, nw, nh, r) : dilateMax(alpha, nw, nh, r);
+    const full = ctx.createImageData(nw, nh);
+    const lit = flat ? null : ctx.createImageData(nw, nh);
+    for (let i = 0, j = 0; i < n; i++, j += 4) {
+      if (!thick[i]) continue;
+      full.data[j] = full.data[j + 1] = full.data[j + 2] = full.data[j + 3] = 255;
+      if (lit) {
+        lit.data[j] = lit.data[j + 1] = lit.data[j + 2] = 255;
+        lit.data[j + 3] = thick[i];
+      }
+    }
+    ctx.putImageData(full, 0, 0);
+    let pair = { shape, strength: shape, flat: true };
+    if (lit) {
+      const strength = document.createElement("canvas");
+      strength.width = nw; strength.height = nh;
+      // The same context flags as the shape canvas, so the browser is asked
+      // to shrink the two the same way.
+      strength.getContext("2d", { willReadFrequently: true }).putImageData(lit, 0, 0);
+      pair = { shape, strength, flat: false };
+    }
+    match.native.set(key, pair);
+    return pair;
   }
 
   // A square dilation as two one-dimensional passes, stamping runs out from
@@ -579,10 +647,38 @@
     return out;
   }
 
-  // Mean of E over a set of pixel indices, with the set shifted by (dx, dy).
-  // Shifting the sample instead of redrawing the stencil is what makes the
-  // twenty-seven evaluations affordable.
-  function meanAt(E, idx, w, h, dx, dy) {
+  // The same two passes over values 0..255 instead of a shape: a pixel takes
+  // the strongest value within r of it. The runs cannot be filled in one go
+  // any more, but a stencil is still thin lines on nothing, and the pass that
+  // costs is the one over what the first pass left.
+  function dilateMax(src, w, h, r) {
+    const tmp = new Uint8Array(w * h), out = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = 0; x < w; x++) {
+        const v = src[row + x];
+        if (!v) continue;
+        const a = row + Math.max(0, x - r), b = row + Math.min(w - 1, x + r);
+        for (let i = a; i <= b; i++) if (tmp[i] < v) tmp[i] = v;
+      }
+    }
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = 0; x < w; x++) {
+        const v = tmp[row + x];
+        if (!v) continue;
+        const a = Math.max(0, y - r), b = Math.min(h - 1, y + r);
+        for (let yy = a; yy <= b; yy++) { const i = yy * w + x; if (out[i] < v) out[i] = v; }
+      }
+    }
+    return out;
+  }
+
+  // Mean of E over a set of pixel indices, with the set shifted by (dx, dy),
+  // weighted by wt when there is one: sum(w × E) / sum(w). Without weights it
+  // is the plain mean, to the bit. Shifting the sample instead of redrawing
+  // the stencil is what makes the twenty-seven evaluations affordable.
+  function meanAt(E, idx, w, h, dx, dy, wt) {
     let sum = 0, cnt = 0;
     const n = w * h, off = dy * w + dx;
     for (let t = 0; t < idx.length; t++) {
@@ -591,7 +687,8 @@
       if (x < 0 || x >= w) continue;
       const j = i + off;
       if (j < 0 || j >= n) continue;
-      sum += E[j]; cnt++;
+      const ww = wt ? wt[t] : 1;
+      sum += E[j] * ww; cnt += ww;
     }
     return cnt ? sum / cnt : 0;
   }
@@ -627,5 +724,52 @@
                  : { rect, place, score: null };
   }
 
-  window.Lens = { open, close, stats, passRule, fakeScore, isOpen };
+  // For the tests: the masks this layout builds, the scorer's own arrays.
+  // They stay in the page — a quarter of a million indices costs more to
+  // carry out of the browser than a test learns from having them there — so
+  // a test reads them here and hands back what it made of them.
+  function maskSets() {
+    if (!match) return null;
+    const img = q("#lensstencil"), video = q("#lensfeed");
+    if (!img.naturalWidth || !place || !(video.videoWidth > 0)) return null;
+    const { w, h, k } = workSize();
+    const sets = stencilMasks(img, w, h, k);
+    return sets.length ? { w, h, sets } : null;
+  }
+
+  // And this instant's frame scored over those masks twice, once with the
+  // weights and once with every weight taken as one, which is the arithmetic
+  // the game shipped before the alpha meant anything. Park gate's ten are
+  // alpha 255 on every kept pixel and cannot be recut because their
+  // photographs are gone, so for them `weights` has to be false — no weights
+  // were built and the plain mean is what ran — and their masks have to be
+  // the masks they always were, which is maskSets's to say, not this one's.
+  function bothWays() {
+    const m = maskSets();
+    if (!m) return null;
+    const { w, h, sets } = m;
+    const E = edgeMap(q("#lensfeed"), w, h);
+    let weighted = 0, flat = 0, lo = Infinity, hi = -Infinity, n = 0, weights = false;
+    for (const mk of sets) {
+      if (mk.W) {
+        weights = true;
+        for (let t = 0; t < mk.W.length; t++) {
+          if (mk.W[t] < lo) lo = mk.W[t];
+          if (mk.W[t] > hi) hi = mk.W[t];
+        }
+      }
+      n += mk.M.length;
+      for (const dy of MATCH_SHIFTS) for (const dx of MATCH_SHIFTS) {
+        const off = meanAt(E, mk.R, w, h, dx, dy);
+        const line = (on) => Math.max(0, (on - off) / (on + off + 0.001));
+        weighted = Math.max(weighted, line(meanAt(E, mk.M, w, h, dx, dy, mk.W)));
+        flat = Math.max(flat, line(meanAt(E, mk.M, w, h, dx, dy)));
+      }
+    }
+    // Nothing was weighed, which is every weight being one.
+    if (!weights) { lo = 1; hi = 1; }
+    return { weighted, flat, minW: lo, maxW: hi, n, weights, w, h };
+  }
+
+  window.Lens = { open, close, stats, passRule, fakeScore, isOpen, bothWays, maskSets };
 })();

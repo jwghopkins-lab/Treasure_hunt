@@ -1,7 +1,10 @@
 // The camera screen: the stencil fixed, the bar at the top, the clue and the
-// distance line, the back button, and nothing else.
+// distance line, the back button, and nothing else. And the mask under it:
+// which pixels the scorer reads, and what it weighs each of them by.
 const { test, expect } = require("@playwright/test");
-const { hunt, prepare, withName, stubBoard, destPoint } = require("./helpers");
+const fs = require("fs");
+const path = require("path");
+const { ROOT, hunt, prepare, withName, stubBoard, destPoint } = require("./helpers");
 
 const FIX = hunt("fixture");
 const withClue = FIX.stencils.find((s) => s.clue && s.location);
@@ -11,6 +14,80 @@ async function openTile(page, id) {
   await page.locator(`#grid .tile[data-id="${id}"]`).click();
   await expect(page.locator("#lens")).toBeVisible();
 }
+
+// The screen open with the match loop stopped, so that a pass cannot close it
+// out from under a reading: the fake camera's own pattern scores well enough
+// to pass if it is left running.
+async function openStill(page, id) {
+  await openTile(page, id);
+  // The screen opens before the camera has a frame and before the stencil
+  // has decoded, and both are read below: the stencil's own pixels are
+  // rewritten, and there is nothing to score until the video is running.
+  await page.waitForFunction(() => {
+    const v = document.getElementById("lensfeed"), s = document.getElementById("lensstencil");
+    return v && v.videoWidth > 0 && s && s.naturalWidth > 0 && window.Lens.stats().place;
+  });
+  await page.evaluate(() => window.Lens.fakeScore(0));
+}
+
+// A short name for the mask itself: the pixels of M and then of R, at every
+// scale, in the order the scorer holds them. Two masks that agree on every
+// pixel and its place agree here; one that gains, loses or moves a single
+// pixel does not. The hashing is done in the page because the mask is a
+// quarter of a million numbers and the answer is eight characters.
+async function maskDigest(page) {
+  return page.evaluate(() => {
+    const m = window.Lens.maskSets();
+    if (!m) return null;
+    let hash = 0x811c9dc5;
+    const eat = (v) => { hash = Math.imul(hash ^ (v >>> 0), 0x01000193) >>> 0; };
+    for (const mk of m.sets) {
+      eat(mk.M.length); eat(mk.R.length);
+      for (let t = 0; t < mk.M.length; t++) eat(mk.M[t]);
+      for (let t = 0; t < mk.R.length; t++) eat(mk.R[t]);
+    }
+    return { digest: hash.toString(16).padStart(8, "0"), size: [m.w, m.h],
+             scales: m.sets.map((mk) => mk.M.length) };
+  });
+}
+
+// A PNG from the repository worn in place of the hunt's own stencil. The wait
+// is for the screen's own load handler, which lays the new one out before
+// anything can be measured against it.
+async function wearStencil(page, file) {
+  await wear(page, "data:image/png;base64," + fs.readFileSync(file).toString("base64"));
+}
+async function wear(page, src) {
+  await page.evaluate((s) => new Promise((done) => {
+    const img = document.getElementById("lensstencil");
+    img.addEventListener("load", done, { once: true });
+    img.src = s;
+  }), src);
+}
+
+// The hunt's own stencil redrawn at a chosen alpha wherever it has any: left
+// of the middle at one value, right of it at another. A test about the
+// weights should say what the alpha is rather than trust how it was cut.
+async function wearAlpha(page, left, right) {
+  const src = await page.evaluate(([l, r]) => {
+    const img = document.getElementById("lensstencil");
+    const c = document.createElement("canvas");
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const ctx = c.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(0, 0, c.width, c.height);
+    for (let y = 0; y < c.height; y++) {
+      for (let x = 0; x < c.width; x++) {
+        const j = (y * c.width + x) * 4 + 3;
+        if (d.data[j]) d.data[j] = x < c.width / 2 ? l : r;
+      }
+    }
+    ctx.putImageData(d, 0, 0);
+    return c.toDataURL();
+  }, [left, right]);
+  await wear(page, src);
+}
+
 
 test.describe("the camera screen", () => {
   test.beforeEach(async ({ page }) => {
@@ -23,6 +100,14 @@ test.describe("the camera screen", () => {
     await page.goto("fixture/");
     await openTile(page, withClue.id);
     const lens = page.locator("#lens");
+    // The fill is empty before the first evaluation, and is held there while
+    // the rest of the screen is measured: the fake camera's own pattern has
+    // edges, and left running it fills the bar in behind the measurements.
+    expect(await page.evaluate(() => {
+      const w = document.getElementById("matchfill").style.width;
+      window.Lens.fakeScore(0);
+      return w;
+    })).toBe("0%");
     await expect(lens.locator("#lensstencil")).toHaveAttribute("src", withClue.src);
     await expect(lens.locator("#lensfeed")).toBeVisible();
     // The bar is at the very top and the full width.
@@ -127,6 +212,79 @@ test.describe("the camera screen", () => {
     // Green, not white, and no tick mark or threshold line anywhere.
     await expect(page.locator("#matchfill")).toHaveCSS("background-color", "rgb(63, 191, 127)");
     await expect(page.locator("#matchtick")).toHaveCount(0);
+  });
+
+  test("the mask weighs each pixel by the stencil's alpha, and the shape does not move with it", async ({ page }) => {
+    await page.goto("fixture/");
+    await openStill(page, withClue.id);
+    // Alpha 255 wherever the picture has any, which is how every stencil was
+    // cut before the alpha carried a strength: there is nothing to weigh by,
+    // no weights are built, and the plain mean is what runs.
+    await wearAlpha(page, 255, 255);
+    const full = await page.evaluate(() => window.Lens.bothWays());
+    const fullMask = await maskDigest(page);
+    expect(full.n).toBeGreaterThan(0);
+    expect(full.weights).toBe(false);
+    expect(full.minW).toBe(1);
+    expect(full.maxW).toBe(1);
+    expect(full.weighted).toBe(full.flat);
+    // Now the same picture with the alpha down the left at a fifth, which is
+    // well under the 128 the shape is thresholded at. The weights follow the
+    // alpha all the way down, and the mask is the same mask to the pixel,
+    // digest and all, because a faint line is still a line.
+    await wearAlpha(page, 51, 255);
+    const faint = await page.evaluate(() => window.Lens.bothWays());
+    expect(faint.weights).toBe(true);
+    expect(await maskDigest(page)).toEqual(fullMask);
+    expect(faint.n).toBe(full.n);
+    expect(faint.minW).toBeGreaterThan(0.19);
+    expect(faint.minW).toBeLessThan(0.21);
+    expect(faint.maxW).toBe(1);
+    expect(faint.weighted).not.toBe(faint.flat);
+  });
+
+  test("every stencil the repository ships builds a mask the scorer can read", async ({ page }) => {
+    test.setTimeout(180000);
+    // Park gate's ten were once pinned here by digest, because their
+    // photographs were gone and they could never be recut. The photographs
+    // came back and every hunt has been recut weighted, so a golden digest
+    // would now only pin whichever cut happened to be committed. What is
+    // worth holding is what a stencil has to be for the scorer to read it at
+    // all, and that is true of every stencil of every hunt: a mask with
+    // pixels in it at all five scales, in the working frame the fake camera
+    // gives this suite, and weights that are strengths — over nought, never
+    // over one, and one somewhere, since the tool keeps the strongest edge it
+    // finds. A stencil that is alpha 255 all through carries no weights and
+    // has to score exactly what the plain mean scores, which is the arithmetic
+    // the game shipped with.
+    const dir = path.join(ROOT, "app", "img");
+    const hunts = fs.readdirSync(dir).filter((d) => fs.statSync(path.join(dir, d)).isDirectory()).sort();
+    const files = hunts.flatMap((h) => fs.readdirSync(path.join(dir, h))
+      .filter((f) => f.endsWith("-stencil.png")).sort().map((f) => path.join(h, f)));
+    expect(files.length).toBeGreaterThan(20);
+    await page.goto("fixture/");
+    for (const f of files) {
+      // One opening each: the masks a stencil builds are held until the
+      // screen closes, and thirty stencils' worth is a lot to hold at once.
+      await openStill(page, bare.id);
+      await wearStencil(page, path.join(dir, f));
+      const r = await page.evaluate(() => window.Lens.bothWays());
+      const m = await maskDigest(page);
+      expect(r.n, f).toBeGreaterThan(0);
+      // The default fake camera is 640x480, so the working frame is 320x240
+      // and not the phone's own portrait.
+      expect(m.size, f).toEqual([320, 240]);
+      expect(m.scales.length, f).toBe(5);
+      for (const n of m.scales) expect(n, `${f} has a scale with an empty mask`).toBeGreaterThan(0);
+      expect(r.minW, `${f} has a weight at or under nought`).toBeGreaterThan(0);
+      expect(r.maxW, `${f} has a weight over one`).toBe(1);
+      if (!r.weights) {
+        expect(r.minW, f).toBe(1);
+        expect(r.weighted, `${f} is flat and scores differently through the weights`).toBe(r.flat);
+      }
+      await page.locator("#lensback").click();
+      await expect(page.locator("#lens")).toBeHidden();
+    }
   });
 
   test("the distance line reads the mocked position and blanks on a poor fix", async ({ page, context }) => {

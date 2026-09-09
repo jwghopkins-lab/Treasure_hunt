@@ -39,6 +39,10 @@ on:
       speck:
         description: Drop blobs smaller than this, if the tool's own choice needs overriding
         required: false
+      floor:
+        description: Refuse a stencil that cannot score this against its own photograph; 0 measures without refusing
+        required: false
+        default: "0.35"
 
 permissions:
   contents: write
@@ -89,6 +93,20 @@ jobs:
             --manifest "$RUNNER_TEMP/manifest.json" \
             --base https://ntgsksywctywwzzaaffq.supabase.co \
             $places $tune
+
+      # What the tool just cut, measured against the photographs it was cut
+      # from: the attainable score where a stencil belongs, and the best
+      # score it can reach anywhere else in the same hunt. A stencil that
+      # cannot clear the pass lines where it belongs, or that reaches them
+      # somewhere it does not, is a photograph to take again, and this is
+      # where that is found out rather than in the street.
+      - name: Measure the new stencils against their photographs
+        env:
+          SLUG: ${{ inputs.slug }}
+          FLOOR: ${{ inputs.floor }}
+        run: |
+          python3 pipeline/audit.py "content/$SLUG.json" \
+            --photos "photos/$SLUG" --floor "${FLOOR:-0.35}"
 
       - name: The python tests
         run: python3 -m unittest discover -s tests -p 'test_*.py'
