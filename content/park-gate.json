@@ -54,6 +54,16 @@
       "id": "shot-10",
       "src": "img/park-gate/shot-10-stencil.png",
       "hint": "img/park-gate/shot-10-stencil-hint.png"
+    },
+    {
+      "id": "shot-11",
+      "src": "img/park-gate/shot-11-stencil.png",
+      "hint": "img/park-gate/shot-11-stencil-hint.png"
+    },
+    {
+      "id": "shot-12",
+      "src": "img/park-gate/shot-12-stencil.png",
+      "hint": "img/park-gate/shot-12-stencil-hint.png"
     }
   ]
 }
