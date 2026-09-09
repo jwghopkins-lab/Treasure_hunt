@@ -180,7 +180,9 @@ class AuditTest(unittest.TestCase):
         self.assertTrue(lines[0].startswith("stencil"), self.proc.stdout)
         named = [line.split()[0] for line in lines[1:1 + len(PICTURES)]]
         self.assertEqual(named, list(PICTURES), self.proc.stdout)
-        self.assertIn(f"{len(PICTURES)} stencils:", lines[-1])
+        # The summary, then the same hunt on the smaller working frame.
+        self.assertIn(f"{len(PICTURES)} stencils:", lines[1 + len(PICTURES)])
+        self.assertTrue(lines[-1].startswith("on a slow phone"), self.proc.stdout)
 
     def test_confusion_names_another_photograph(self):
         for name in PICTURES:
@@ -204,8 +206,8 @@ class AuditTest(unittest.TestCase):
     def test_an_old_stencil_weighs_one_everywhere(self):
         # The format contract's whole promise: an all-255 stencil comes out
         # of the mask at weight one, so the weighted mean is the plain mean
-        # and Park gate's ten, whose photographs are gone, score exactly as
-        # they did. The cut stencil is checked alongside it, because weights
+        # and a stencil cut before the tool carried strength scores exactly
+        # as it did. The cut stencil is checked alongside it, because weights
         # that are all one whatever the alpha would satisfy the promise by
         # ignoring the alpha altogether.
         src = next(s["src"] for s in self.stencils if s["id"] == "door")
@@ -213,9 +215,10 @@ class AuditTest(unittest.TestCase):
             cut = im.convert("RGBA").split()[3]
         with Image.open(self.flattened("door")) as im:
             old = im.convert("RGBA").split()[3]
-        was = {w for a in audit.alignments(old) for w in a.mask.ws}
+        frame = audit.frame_for(cut.size, audit.WORK_PX)
+        was = {w for a in audit.alignments(old, frame) for w in a.mask.ws}
         self.assertEqual(was, {1.0}, sorted(was)[:8])
-        now = {w for a in audit.alignments(cut) for w in a.mask.ws}
+        now = {w for a in audit.alignments(cut, frame) for w in a.mask.ws}
         self.assertTrue([w for w in now if w < 1], sorted(now)[:8])
 
     def test_the_alpha_is_the_weight(self):
@@ -244,6 +247,43 @@ class AuditTest(unittest.TestCase):
                 json.loads(report.read_text(encoding="utf-8"))["stencils"]}
         self.assertGreater(rows["arch"]["on"], rows["arch-flat"]["on"] + 0.02, rows)
 
+    def test_a_landscape_stencil_is_letterboxed_and_not_squashed(self):
+        """lens.js fits the stencil inside the video's rectangle at the
+        stencil's own aspect and scales both axes by the same amount. The
+        audit did not, at first: it stretched every stencil to fill a fixed
+        portrait frame, which moves the lines, the thickening and the ring by
+        different amounts on the two axes and scores a stencil no camera can
+        produce. Park gate's two landscape photographs read 0.389 and 0.756
+        that way against 0.424 and 0.836 through the camera, so this is
+        pinned rather than left to the next reader's care."""
+        frame = audit.frame_for((1600, 1200), audit.WORK_PX)
+        self.assertEqual(frame, (320, 240), "the frame has the photograph's shape")
+        # A landscape stencil in a landscape frame fills it; the same stencil
+        # in a portrait frame is letterboxed, never stretched.
+        self.assertEqual(audit.placed((800, 600), (320, 240)), (320.0, 240.0))
+        wide = audit.placed((800, 600), (240, 320))
+        self.assertAlmostEqual(wide[0] / wide[1], 800 / 600, places=6)
+        self.assertLessEqual(wide[0], 240)
+        self.assertLessEqual(wide[1], 320)
+        # And drawn() paints it at that size, centred, on an empty frame.
+        img = Image.new("L", (800, 600), 255)
+        canvas = audit.drawn(img, 1, (240, 320))
+        self.assertEqual(canvas.size, (240, 320))
+        box = canvas.getbbox()
+        self.assertEqual((box[2] - box[0], box[3] - box[1]),
+                         (round(wide[0]), round(wide[1])), box)
+        self.assertGreater(box[1], 0, "a landscape stencil leaves the frame's top empty")
+
+    def test_the_two_working_frames_are_both_measured(self):
+        """A phone that cannot evaluate at 320 px inside ten milliseconds
+        drops to 240 for the rest of the stencil, and confuses more there.
+        Confusion is judged against a line taken from the game, so both
+        frames are measured and the worse one is judged."""
+        for row in self.rows.values():
+            self.assertIn("attainable_slow", row)
+            self.assertIn("confusion_slow", row)
+        self.assertIn("on a slow phone", self.proc.stdout)
+
     def test_a_confusion_refuses_and_names_where(self):
         # The floor set under everything this hunt measured, so the only
         # thing left to refuse it for is the stencil that passes in the wrong
@@ -271,9 +311,11 @@ class AuditTest(unittest.TestCase):
         rows = {r["id"]: r for r in
                 json.loads(report.read_text(encoding="utf-8"))["stencils"]}
         for name, row in rows.items():
-            self.assertGreaterEqual(row["confusion"], 0.20, row)
-            self.assertIn(f"{name} ({row['confusion']:.3f} on {row['confused_with']})",
-                          wrong[0])
+            # The line names the worse of the two working frames, because
+            # that is the one the refusal was made on.
+            worst = max(row["confusion"], row["confusion_slow"])
+            self.assertGreaterEqual(worst, 0.20, row)
+            self.assertIn(f"{name} ({worst:.3f} on {row['confused_with']})", wrong[0])
 
     def test_a_broken_input_is_not_the_verdict(self):
         # Exit 1 means the stencils are not worth walking to. A hunt file

@@ -65,6 +65,40 @@ async function wear(page, src) {
   }), src);
 }
 
+// Whether a stencil PNG carries strengths, read off its own pixels rather
+// than out of the scorer: what the tool wrote, not what the mask came out
+// with. The two are the same question asked of different code, which is the
+// point — it is what lets a test say the scorer weighed the stencil it was
+// given rather than merely that it weighed something.
+async function gradedAlpha(page, file) {
+  return page.evaluate((src) => new Promise((done, fail) => {
+    const img = new Image();
+    img.onerror = () => fail(new Error("the stencil would not decode"));
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0);
+      const d = ctx.getImageData(0, 0, c.width, c.height).data;
+      for (let j = 3; j < d.length; j += 4) if (d[j] && d[j] !== 255) return done(true);
+      done(false);
+    };
+    img.src = src;
+  }), "data:image/png;base64," + fs.readFileSync(file).toString("base64"));
+}
+
+// Where the mask sits in the working frame, and how much of it there is.
+async function maskCentre(page) {
+  return page.evaluate(() => {
+    const m = window.Lens.maskSets();
+    if (!m) return null;
+    const mk = m.sets[Math.floor(m.sets.length / 2)];   // the scale nearest 1
+    let sx = 0, sy = 0;
+    for (let t = 0; t < mk.M.length; t++) { sx += mk.M[t] % m.w; sy += Math.floor(mk.M[t] / m.w); }
+    return { n: mk.M.length, x: sx / mk.M.length, y: sy / mk.M.length, w: m.w, h: m.h };
+  });
+}
+
 // The hunt's own stencil redrawn at a chosen alpha wherever it has any: left
 // of the middle at one value, right of it at another. A test about the
 // weights should say what the alpha is rather than trust how it was cut.
@@ -262,6 +296,7 @@ test.describe("the camera screen", () => {
     const files = hunts.flatMap((h) => fs.readdirSync(path.join(dir, h))
       .filter((f) => f.endsWith("-stencil.png")).sort().map((f) => path.join(h, f)));
     expect(files.length).toBeGreaterThan(20);
+    let graded = 0;
     await page.goto("fixture/");
     for (const f of files) {
       // One opening each: the masks a stencil builds are held until the
@@ -278,13 +313,56 @@ test.describe("the camera screen", () => {
       for (const n of m.scales) expect(n, `${f} has a scale with an empty mask`).toBeGreaterThan(0);
       expect(r.minW, `${f} has a weight at or under nought`).toBeGreaterThan(0);
       expect(r.maxW, `${f} has a weight over one`).toBe(1);
-      if (!r.weights) {
+      // The scorer weighed this stencil if and only if the tool wrote
+      // strengths into it. Without this the test passes with the weighting
+      // switched off altogether: a stencil that carries no weights reports
+      // minW and maxW as one, which satisfies everything above.
+      const isGraded = await gradedAlpha(page, path.join(dir, f));
+      expect(r.weights, isGraded ? `${f} carries strengths and was not weighed`
+                                 : `${f} is alpha 255 all through and was weighed`).toBe(isGraded);
+      if (isGraded) {
+        graded += 1;
+        expect(r.minW, `${f} is weighed but every weight is one`).toBeLessThan(1);
+      } else {
         expect(r.minW, f).toBe(1);
-        expect(r.weighted, `${f} is flat and scores differently through the weights`).toBe(r.flat);
       }
       await page.locator("#lensback").click();
       await expect(page.locator("#lens")).toBeHidden();
     }
+    // And the repository is not all flat, which would make the line above
+    // true of everything without the scorer weighing anything.
+    expect(graded, "no shipped stencil carries strengths").toBeGreaterThan(0);
+  });
+
+  test("the mask sits where the stencil is drawn, to the pixel", async ({ page }) => {
+    // What the golden digest of Park gate's ten used to hold: an absolute
+    // pin on where the mask lands, rather than one mask compared with
+    // another. A stencil symmetric about both axes has to give a mask whose
+    // centre of gravity is the frame's centre; an off-by-one anywhere in the
+    // centring, the shrink or the thickening moves it by a whole pixel, and
+    // every score in the game is taken over pixels that have moved.
+    await page.goto("fixture/");
+    await openStill(page, bare.id);
+    // A cross and a border, drawn at the stencil's own resolution, symmetric
+    // under a flip about either axis. Built here rather than read from the
+    // repository so that recutting a hunt cannot change what this pins.
+    await wear(page, await page.evaluate(() => {
+      const c = document.createElement("canvas");
+      c.width = 600; c.height = 800;
+      const ctx = c.getContext("2d");
+      ctx.strokeStyle = "rgba(255,61,0,1)";
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.moveTo(300, 40); ctx.lineTo(300, 760);
+      ctx.moveTo(40, 400); ctx.lineTo(560, 400);
+      ctx.strokeRect(60, 100, 480, 600);
+      ctx.stroke();
+      return c.toDataURL();
+    }));
+    const c = await maskCentre(page);
+    expect(c.n).toBeGreaterThan(100);
+    expect(c.x).toBeCloseTo((c.w - 1) / 2, 0);
+    expect(c.y).toBeCloseTo((c.h - 1) / 2, 0);
   });
 
   test("the distance line reads the mocked position and blanks on a poor fix", async ({ page, context }) => {

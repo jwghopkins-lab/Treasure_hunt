@@ -242,7 +242,18 @@ def drop_specks(mask, w, h, speck):
 SPECKS = [60, 80, 100, 130, 160, 200, 250, 300]
 STROKE_PX = 300          # a component at least this long is a stroke, not a speck
 STROKE_SHARE = 0.6       # the share of kept pixels that should be in strokes
-SPARSE = 0.035           # under this set fraction the scorer has little to hold
+# Under this share of what the keep asked for, the scorer has little to hold:
+# most of what the threshold picked was specks and was dropped. A share
+# rather than a fraction, because the fraction scales with --keep and the
+# number was read off the first hunt at 0.066, where it stood for losing
+# about half of it. Left as a fraction it would have gone on meaning "half"
+# at 0.066 and "under a third" at 0.12, and quietly stopped firing.
+#
+# It is not the instrument for a bad photograph in general, and is not meant
+# to be. Park gate's shot-7 is a map: its lines are dense rather than sparse,
+# it says nothing here, and what refuses it is pipeline/audit.py measuring
+# what it scores. This note is for the frame with almost nothing in it.
+SPARSE_SHARE = 0.53
 DIM = 60                 # mean brightness, of 255, under which a room is dark
 HINT_TIMES = 2           # the hint keeps this many times the stencil's share of the frame
 
@@ -266,7 +277,7 @@ def choose(mag, w, h, keep, speck):
     if share < STROKE_SHARE and speck is None:
         notes.append(f"mostly texture even at speck {sp} ({share:.0%} of its lines are strokes); "
                      "consider another photograph")
-    elif frac < SPARSE:
+    elif frac < SPARSE_SHARE * keep:
         notes.append(f"sparse: {frac:.1%} of the frame before thickening; "
                      "a subject with bigger, plainer edges would give the camera more to hold")
     return from_components(kept, w, h), sp, notes
@@ -362,10 +373,11 @@ def save_png(img, path):
 
     tRNS carries each palette entry's alpha exactly, so the alpha the scorer
     reads back is the alpha the tool wrote — this is a smaller file and not a
-    smaller stencil. Anything with more colours than a palette holds, which
-    no stencil this tool cuts has, is written as it came.
+    smaller stencil. Anything a palette cannot hold — more than 256 colours,
+    or a mode whose colours are not RGBA tuples — is written as it came,
+    which no stencil this tool cuts needs but the next caller might.
     """
-    counts = img.getcolors(256)
+    counts = img.getcolors(256) if img.mode == "RGBA" else None
     if counts is None:
         img.save(path, optimize=True)
         return
@@ -375,8 +387,14 @@ def save_png(img, path):
     raw = img.tobytes()
     pal = Image.frombytes("P", img.size,
                           bytes(index[raw[i:i + 4]] for i in range(0, len(raw), 4)))
-    flat = [v for c in colours for v in c[:3]]
-    pal.putpalette(flat + [0] * (768 - len(flat)))
+    # The palette is handed over at exactly the length it needs. Padding it
+    # to 256 entries, which is the obvious thing to write, costs far more
+    # than the padding: Pillow takes the bit depth from the palette's length
+    # rather than from the pixels, so a two-colour hint padded to 256 goes
+    # out at eight bits a pixel with a 768-byte PLTE instead of one bit and
+    # six. Over the three hunts cut here that padding was a tenth of the
+    # stencils and a sixth of the hints, for nothing.
+    pal.putpalette([v for c in colours for v in c[:3]])
     pal.save(path, optimize=True, transparency=bytes(c[3] for c in colours))
 
 
@@ -413,10 +431,9 @@ def make(photo, out, keep, speck, long):
     mag = edge_map(px, w, h)
     mask, speck, notes = choose(mag, w, h, keep, speck)
     # The hint: the same picture with twice as much of it kept, at the same
-    # speck limit and weighted the same way, so its extra lines are drawn as
-    # faint as they are, for the hint button to lay under the real stencil.
-    # The scorer never reads it, so what it costs in texture is the player's
-    # to take or leave.
+    # speck limit, for the hint button to lay under the real stencil. It is
+    # drawn flat rather than weighted — see where it is written below — since
+    # the scorer never reads it and a flat alpha compresses far better.
     hint = threshold(mag, w, h, min(1.0, keep * HINT_TIMES))
     drop_specks(hint, w, h, speck)
     if not any(mask):

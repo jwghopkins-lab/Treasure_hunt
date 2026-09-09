@@ -121,7 +121,7 @@ test.describe("the fake camera", () => {
       // the arithmetic that shipped, rather than a weighted mean that ought
       // to come to the same number. Which pixels that mean is taken over is
       // the other half of the guarantee, and it is pinned where it matters:
-      // camera.spec.js holds Park gate's ten masks to the pixel. This
+      // camera.spec.js holds a symmetric stencil's mask to the pixel. This
       // fixture will be recut like any other stencil, so what it is worth
       // here is the part a mask cannot show — that a real photograph, played
       // into a real camera, still scores well clear of the top pass line.

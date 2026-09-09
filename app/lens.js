@@ -408,7 +408,17 @@
     // Keep each evaluation cheap. A phone that cannot manage it at 320 px
     // drops to 240 px and stays there for the rest of the screen. Only the
     // steady ticks count: the one that rebuilds the masks pays for the
-    // layout, not the frame. The median of the last eight, not the mean of
+    // layout, not the frame.
+    //
+    // Both got dearer when the keep went to 0.12 and the alpha became a
+    // weight. Measured here, over Snowman House's seven stencils against a
+    // blank feed: a steady evaluation went from 19.6-24.3 ms to 23.4-32.5 ms,
+    // about a quarter more, which is what this median is for and what the
+    // drop to 240 px answers. The rebuild tick is dearer again — two
+    // downscales and readbacks per scale instead of one, and a max dilation
+    // over twice as many set pixels — and it is excluded here on purpose,
+    // as it always was: it happens once per opening, and demoting a phone
+    // for the tick that pays for the layout would demote every phone. The median of the last eight, not the mean of
     // the last four: one garbage-collection pause is a hiccup, and a hiccup
     // should not demote the screen for the rest of the stencil.
     const took = now - t0;
@@ -556,6 +566,11 @@
         if (M[i]) { Mi.push(i); if (strength) Wi.push(Math.min(1, strength[j] / shape[j])); }
         else if (D[i]) Ri.push(i);
       }
+      // A scale whose mask came out empty is dropped rather than kept as a
+      // set that can only score zero, which is what pipeline/audit.py's
+      // alignments() does with the same case: the two have to agree on what
+      // a degenerate scale contributes, and nothing is the honest answer.
+      if (!Mi.length) continue;
       out.push({ M: Int32Array.from(Mi), W: strength ? Float32Array.from(Wi) : null,
                  R: Int32Array.from(Ri) });
     }
@@ -739,11 +754,14 @@
 
   // And this instant's frame scored over those masks twice, once with the
   // weights and once with every weight taken as one, which is the arithmetic
-  // the game shipped before the alpha meant anything. Park gate's ten are
-  // alpha 255 on every kept pixel and cannot be recut because their
-  // photographs are gone, so for them `weights` has to be false — no weights
-  // were built and the plain mean is what ran — and their masks have to be
-  // the masks they always were, which is maskSets's to say, not this one's.
+  // the game shipped before the alpha meant anything. `weights` says which
+  // path the stencil in front of it took: false for a stencil that is alpha
+  // 255 on every kept pixel, where no weights were built and the plain mean
+  // ran, and for such a stencil the two numbers have to be the same one.
+  // Which stencils those are is a matter of what has been cut lately rather
+  // than a fact about a hunt: the tool has written strengths since the keep
+  // went to 0.12, so a stencil recut since then is weighed and one cut before
+  // it is not, whatever hunt it belongs to.
   function bothWays() {
     const m = maskSets();
     if (!m) return null;
@@ -751,7 +769,8 @@
     const E = edgeMap(q("#lensfeed"), w, h);
     let weighted = 0, flat = 0, lo = Infinity, hi = -Infinity, n = 0, weights = false;
     for (const mk of sets) {
-      if (mk.W) {
+      // A zero-length W is a mask with nothing in it, not a weighed one.
+      if (mk.W && mk.W.length) {
         weights = true;
         for (let t = 0; t < mk.W.length; t++) {
           if (mk.W[t] < lo) lo = mk.W[t];

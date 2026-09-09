@@ -150,6 +150,19 @@ class DoorTest(unittest.TestCase):
         im = Image.open(self.out / "door-stencil.png").convert("RGBA")
         self.assertIn(f"{ink(im) / (im.width * im.height):.1%} set", self.proc.stderr)
 
+    def test_the_tool_writes_the_small_format_and_not_plain_rgba(self):
+        """save_png is only worth having if main() calls it. Every stencil in
+        the game loads on the hunt's first screen, and RGBA is about two
+        fifths more bytes for the same pixels, so this is checked on what the
+        command line produced rather than on the function in isolation."""
+        for name in ("door-stencil.png", "door-stencil-hint.png"):
+            with Image.open(self.out / name) as im:
+                self.assertEqual(im.mode, "P", name)
+                # Pillow hands back the tRNS chunk as a bytes of per-entry
+                # alphas, or as the single index when index 0 is the only
+                # transparent one, which is a two-colour hint.
+                self.assertIn("transparency", im.info, name)
+
     def test_preview_is_written_beside_it(self):
         with Image.open(self.out / "door-stencil-preview.jpg") as pv:
             self.assertEqual(pv.size, (600, 800))
@@ -268,12 +281,61 @@ class SavePngTest(unittest.TestCase):
         self.assertTrue(same, "the palette write moved a pixel")
         self.assertLess(small, plain, "the palette write is not smaller")
 
+    def test_the_palette_is_no_longer_than_the_colours_in_it(self):
+        """Smaller than RGBA is not the same as as small as it goes. Pillow
+        takes the PNG's bit depth from the palette's length rather than from
+        the pixels, so a palette padded to 256 entries — the obvious thing to
+        write — ships a two-colour hint at eight bits a pixel behind a
+        768-byte PLTE. Over the three hunts cut here that padding was about a
+        fifth of every stencil and hint, for nothing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, img in (("graded", self.a_stencil()),
+                              ("flat", stencil.orange([1 if i % 97 else 0 for i in range(4096)],
+                                                      [1.0] * 4096, 64, 64, weighted=False))):
+                out = Path(tmp) / f"{name}.png"
+                stencil.save_png(img, out)
+                colours = len(img.getcolors(256))
+                plte = self.chunk(out, b"PLTE")
+                self.assertEqual(len(plte), 3 * colours, f"{name}: PLTE is padded")
+                depth = self.chunk(out, b"IHDR")[8]
+                self.assertLessEqual(depth, 8, name)
+                self.assertLessEqual(colours, 1 << depth, f"{name}: depth {depth}")
+                if colours <= 16:
+                    self.assertLess(depth, 8, f"{name}: {colours} colours at 8 bits")
+
+    @staticmethod
+    def chunk(path, name):
+        """One chunk's payload out of a PNG, so a test can say what was
+        written rather than what Pillow reads back."""
+        raw = path.read_bytes()
+        at = 8
+        while at < len(raw):
+            size = int.from_bytes(raw[at:at + 4], "big")
+            if raw[at + 4:at + 8] == name:
+                return raw[at + 8:at + 8 + size]
+            at += 12 + size
+        raise AssertionError(f"no {name!r} chunk in {path}")
+
     def test_a_flat_stencil_survives_it_too(self):
+        """Two colours, not one: a real stencil is transparent nearly
+        everywhere, and the transparent entry is the one save_png promises to
+        put at index 0 so that a reader ignoring tRNS shows a hole rather than
+        a solid orange rectangle."""
         w, h = 64, 64
-        flat = stencil.orange([1] * (w * h), [1.0] * (w * h), w, h, weighted=False)
-        mode, same, _, _ = self.written(flat)
-        self.assertEqual(mode, "P")
-        self.assertTrue(same)
+        mask = [1 if 20 <= i % w <= 40 else 0 for i in range(w * h)]
+        flat = stencil.orange(mask, [1.0] * (w * h), w, h, weighted=False)
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "flat.png"
+            stencil.save_png(flat, out)
+            with Image.open(out) as got:
+                self.assertEqual(got.mode, "P")
+                self.assertEqual(got.size, flat.size)
+                # Index 0 is the transparent entry, whichever way Pillow
+                # hands the chunk back: a bytes of per-entry alphas, or the
+                # bare index when index 0 is the only transparent one.
+                trns = got.info["transparency"]
+                self.assertEqual(trns if isinstance(trns, int) else trns[0], 0, trns)
+                self.assertEqual(got.convert("RGBA").tobytes(), flat.tobytes())
 
     def test_too_many_colours_is_written_as_it_came(self):
         """Nothing this tool cuts has more than seventeen colours, but a

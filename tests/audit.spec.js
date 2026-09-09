@@ -24,11 +24,14 @@ const FIX = hunt("fixture");
 test.describe.configure({ mode: "serial" });
 
 // How far apart the two may be. Measured over the seven Snowman House
-// stencils the audit read high by 0.006 to 0.008 every time, the difference
-// being PIL's resize of a JPEG against the browser's draw of a decoded video
-// frame. A tenth of that again is left over the top, and the test says which
-// stencil drifted if one ever does.
-const TOLERANCE = 0.03;
+// stencils and the ten of Park gate, the audit reads high by 0.001 to 0.008,
+// the difference being PIL's resize of a JPEG against the browser's draw of
+// a decoded video frame. This is about twice that, which leaves room for a
+// slower machine's rounding without leaving room for a difference in the
+// arithmetic: the fixture hunt scores in the high eighties, where the score
+// curve is flat, and switching the weighting off on one side alone moves it
+// by only about 0.01. A looser line here would pass that.
+const TOLERANCE = 0.015;
 
 let AUDIT = null;
 
@@ -74,6 +77,12 @@ test.describe("the audit and the camera", () => {
         const r = await page.evaluate(() => window.Lens.bothWays());
         expect(r, "bothWays had no frame to score").toBeTruthy();
         expect(r.n).toBeGreaterThan(0);
+        // The number being compared came off the weighted path. The fixture
+        // stencils are cut by the current tool and carry strengths; if the
+        // browser stopped weighing them the two sides would be measuring
+        // different arithmetic, which is exactly what this test is for.
+        expect(r.weights, `${s.id} was not weighed in the browser`).toBe(true);
+        expect(r.minW, `${s.id} is weighed but every weight is one`).toBeLessThan(1);
         const drift = Math.abs(r.weighted - row.attainable);
         console.log(`${s.id}: audit ${row.attainable.toFixed(3)}, `
                     + `camera ${r.weighted.toFixed(3)}, drift ${drift.toFixed(3)}`);

@@ -43,6 +43,24 @@ a hand does not. So a score here runs above what someone standing in the
 room will hold, and the floor is a line across these numbers rather than a
 prediction of the phone's.
 
+How close it is, measured rather than asserted: over the seven Snowman House
+photographs played through a browser's fake camera and scored by lens.js
+itself, this reads high by 0.006 to 0.008 every time, which is PIL's resize
+of a JPEG against the browser's draw of a decoded video frame.
+tests/audit.spec.js holds that agreement on the fixture hunt so it cannot
+drift unnoticed.
+
+The working frame has the photograph's own shape, long side 320, because a
+player stands where the photograph was taken and holds the phone the way it
+was held. The stencil is then letterboxed inside that frame at its own
+aspect, as layout() letterboxes it inside the video's rectangle, and both
+axes are scaled by the same amount, as stencilMasks scales them. Squashing
+either into a fixed portrait frame instead, which is what this did at first,
+moves the lines, the thickening and the ring by different amounts on the two
+axes and scores a stencil no camera can produce: Park gate's two landscape
+photographs read 0.389 and 0.756 that way against 0.424 and 0.836 through
+the camera.
+
 Needs Pillow, like stencil.py, and is not part of the build.
 """
 
@@ -65,7 +83,15 @@ import stencil    # noqa: E402  the edge map, so both see the same edges
 BASE = Path(__file__).resolve().parent.parent
 APP = BASE / "app"
 
-W, H = 240, 320                                # the scorer's working frame
+# The long side of the working frame. lens.js opens at WORK_PX and drops to
+# WORK_PX_SLOW for the rest of a stencil on a phone that cannot evaluate at
+# the larger size inside ten milliseconds, so a hunt is walked at one or the
+# other and both are measured here. The smaller frame scores a little lower
+# and confuses a little more, and confusion is judged against a line taken
+# from the game rather than from this scale, so the judgement takes the worse
+# of the two.
+WORK_PX = 320
+WORK_PX_SLOW = 240
 SHIFTS = (-5, 0, 5)                            # working-frame pixels
 SCALES = (0.85, 0.925, 1, 1.075, 1.15)
 RING = 6                                       # the ring is the mask grown by this much
@@ -89,31 +115,68 @@ class AuditError(Exception):
     stencil PNG that is not there."""
 
 
-def edge_frame(path):
-    """One photograph as the camera screen sees a frame: upright, scaled into
-    the working frame whole rather than cropped, and put through the same edge
-    map the stencil was cut with."""
+def frame_for(size, long_side):
+    """The working frame one photograph is seen in. lens.js's rectangle is the
+    video's, and the video is the camera: a player stands where the
+    photograph was taken and holds the phone the way it was held, so the
+    frame has the photograph's own shape, scaled so its long side is
+    `long_side`. Holding a phone upright in front of a photograph taken
+    sideways is a different game, and not one the scorer is asked to model."""
+    w, h = size
+    k = long_side / max(w, h)
+    return max(8, round(w * k)), max(8, round(h * k))
+
+
+def upright(path):
+    """One photograph, turned the way it was taken."""
     with Image.open(path) as opened:
-        im = ImageOps.exif_transpose(opened).convert("RGB")
-    im = im.resize((W, H), Image.Resampling.LANCZOS)
-    return stencil.edge_map(stencil.pixels(im), W, H)
+        return ImageOps.exif_transpose(opened).convert("RGB")
 
 
-def drawn(img, scale):
+def edge_frame(im, frame):
+    """One photograph as the camera screen sees a frame: scaled into the
+    working frame whole rather than cropped, and put through the same edge
+    map the stencil was cut with."""
+    fw, fh = frame
+    small = im.resize((fw, fh), Image.Resampling.LANCZOS)
+    return stencil.edge_map(stencil.pixels(small), fw, fh)
+
+
+def placed(size, frame):
+    """The stencil's drawn size in the working frame at scale 1. lens.js's
+    layout() fits the stencil inside the video's rectangle at the stencil's
+    own aspect — `Math.min(rect.w / naturalWidth, rect.h / naturalHeight)` —
+    and stencilMasks then scales both axes by the same k, so a stencil is
+    never squashed. A landscape stencil on a portrait phone is letterboxed
+    top and bottom, and most of the working frame is empty. Squashing it to
+    fill the frame instead, which is what this used to do, moves the lines,
+    the thickening and the ring by different amounts on the two axes and
+    scores a stencil the camera will never see."""
+    fw, fh = frame
+    nw, nh = size
+    t = min(fw / nw, fh / nh)
+    return nw * t, nh * t
+
+
+def drawn(img, scale, frame):
     """One image drawn into the working frame at one scale, centred, as the
-    camera screen draws the stencil to fill the view."""
-    tw, th = max(1, round(W * scale)), max(1, round(H * scale))
+    camera screen draws the stencil into the video's rectangle."""
+    fw, fh = frame
+    pw, ph = placed(img.size, frame)
+    tw, th = max(1, round(pw * scale)), max(1, round(ph * scale))
     small = img.resize((tw, th), Image.Resampling.LANCZOS)
-    canvas = Image.new("L", (W, H), 0)
-    canvas.paste(small, ((W - tw) // 2, (H - th) // 2))
+    canvas = Image.new("L", (fw, fh), 0)
+    canvas.paste(small, ((fw - tw) // 2, (fh - th) // 2))
     return canvas
 
 
-def radius(native_w, scale):
+def radius(size, scale, frame):
     """The thickening the scorer applies at the stencil's own resolution:
     enough of it to come out two working pixels wide once the stencil has
-    been drawn down, which is what nativeMask asks for."""
-    per_native = W * scale / native_w         # working pixels per stencil pixel
+    been drawn down, which is what nativeMask asks for. The ratio is the
+    drawn width over the native width, as lens.js's `elW * sc * k /
+    naturalWidth` is."""
+    per_native = placed(size, frame)[0] * scale / size[0]
     if not per_native > 0:
         return 1
     return min(64, max(1, math.ceil(2 / per_native)))
@@ -129,25 +192,26 @@ def native(alpha, r):
     return thick.point(lambda v: 255 if v else 0), thick
 
 
-def shifted(idx, wts, dx, dy):
+def shifted(idx, wts, dx, dy, frame):
     """One list of frame pixels moved by (dx, dy), the pixels that fall off an
     edge dropped along with their weights. The shift is applied to the mask
     rather than to the frame, as in lens.js, and the row check is on x alone
     because y out of range lands outside the frame's pixels anyway."""
+    fw, fh = frame
     js, ws = array("i"), array("f")
-    off = dy * W + dx
+    off = dy * fw + dx
     for i, w in zip(idx, wts):
-        x = i % W + dx
-        if x < 0 or x >= W:
+        x = i % fw + dx
+        if x < 0 or x >= fw:
             continue
         j = i + off
-        if 0 <= j < W * H:
+        if 0 <= j < fw * fh:
             js.append(j)
             ws.append(w)
     return Part(js, ws, sum(ws))
 
 
-def alignments(alpha):
+def alignments(alpha, frame):
     """Every alignment the search tries, the mask and its ring for each. Built
     once per stencil and scored against every photograph of the hunt, because
     moving tens of thousands of pixels about is most of the work and the
@@ -166,9 +230,9 @@ def alignments(alpha):
     every pixel beside them counts."""
     out = []
     for sc in SCALES:
-        shape_img, strength_img = native(alpha, radius(alpha.width, sc))
-        a = stencil.pixels(drawn(shape_img, sc))
-        wt = stencil.pixels(drawn(strength_img, sc))
+        shape_img, strength_img = native(alpha, radius(alpha.size, sc, frame))
+        a = stencil.pixels(drawn(shape_img, sc, frame))
+        wt = stencil.pixels(drawn(strength_img, sc, frame))
         mask = [i for i, v in enumerate(a) if v >= 128]
         if not mask:
             continue
@@ -176,15 +240,15 @@ def alignments(alpha):
         # images alike: dividing the strength by the shape takes it back out
         # and leaves the strength the tool wrote, which is the weight.
         weights = [min(1.0, wt[i] / a[i]) for i in mask]
-        lit = Image.new("L", (W, H))
+        lit = Image.new("L", frame)
         lit.putdata([255 if v >= 128 else 0 for v in a])
         grown = stencil.pixels(lit.filter(ImageFilter.MaxFilter(2 * RING + 1)))
         ring = [i for i, v in enumerate(grown) if v and a[i] < 128]
         ones = [1.0] * len(ring)
         for dy in SHIFTS:
             for dx in SHIFTS:
-                out.append(Alignment(shifted(mask, weights, dx, dy),
-                                     shifted(ring, ones, dx, dy)))
+                out.append(Alignment(shifted(mask, weights, dx, dy, frame),
+                                     shifted(ring, ones, dx, dy, frame)))
     return out
 
 
@@ -245,9 +309,31 @@ def load_alpha(src):
         return im.convert("RGBA").split()[3]
 
 
+def one_pass(stencils, found, uprights, long_side):
+    """Every stencil against every photograph, at one working size. The edge
+    map of a photograph and the alignments of a stencil both depend on the
+    frame, and the frame is the photograph's own shape, so they are computed
+    per shape and reused: a hunt shot all one way round pays for one set."""
+    shapes = {sid: frame_for(im.size, long_side) for sid, im in uprights.items()}
+    edges = {sid: edge_frame(uprights[sid], shapes[sid]) for sid in uprights}
+    out = {}
+    for s in stencils:
+        sid = s["id"]
+        alpha = load_alpha(s["src"])
+        built = {}
+        against = {}
+        for other in edges:
+            frame = shapes[other]
+            if frame not in built:
+                built[frame] = alignments(alpha, frame)
+            against[other] = score(edges[other], built[frame])
+        out[sid] = against
+    return out
+
+
 def measure(hunt_path, photos):
-    """Every stencil against every photograph. The edge maps are computed once
-    and reused, the alignments once per stencil."""
+    """Every stencil against every photograph, at both of the working sizes a
+    phone runs the scorer at."""
     hunt = json.loads(Path(hunt_path).read_text(encoding="utf-8"))
     if not isinstance(hunt, dict):
         raise AuditError(f"{hunt_path} is not a hunt file")
@@ -258,17 +344,14 @@ def measure(hunt_path, photos):
         if not s.get("id") or not s.get("src"):
             raise AuditError(f"{hunt_path} has a stencil with no id or no src: {s}")
     found = find_photos(stencils, photos)
-    frames = {sid: edge_frame(path) for sid, path in found.items()}
+    uprights = {sid: upright(path) for sid, path in found.items()}
+    fast = one_pass(stencils, found, uprights, WORK_PX)
+    slow = one_pass(stencils, found, uprights, WORK_PX_SLOW)
     rows = []
     for s in stencils:
         sid = s["id"]
-        aligns = alignments(load_alpha(s["src"]))
-        against = {}
-        for other in frames:
-            v, on, off = score(frames[other], aligns)
-            against[other] = round(v, 3)
-            if other == sid:
-                attainable, own_on, own_off = v, on, off
+        against = {k: round(v[0], 3) for k, v in fast[sid].items()}
+        _, own_on, own_off = fast[sid][sid]
         elsewhere = {k: v for k, v in against.items() if k != sid}
         worst_at = max(elsewhere, key=elsewhere.get) if elsewhere else None
         confusion = elsewhere[worst_at] if worst_at else 0.0
@@ -276,6 +359,8 @@ def measure(hunt_path, photos):
         # the margin is the difference of the two columns printed beside it
         # however close the raw score sits to a rounding boundary.
         attainable = against[sid]
+        slow_against = {k: round(v[0], 3) for k, v in slow[sid].items()}
+        slow_elsewhere = [v for k, v in slow_against.items() if k != sid]
         rows.append({
             "id": sid,
             "photo": str(found[sid]),
@@ -285,6 +370,14 @@ def measure(hunt_path, photos):
             "confusion": confusion,
             "confused_with": worst_at,
             "margin": round(attainable - confusion, 3),
+            # The same two numbers on a phone that dropped to the smaller
+            # working frame. The table prints the larger frame's, which is
+            # what the camera reads on a phone that keeps up and what
+            # tests/audit.spec.js compares against; the judgement below takes
+            # the worse of the two, because a stencil that passes in the wrong
+            # place on a slow phone still passes in the wrong place.
+            "attainable_slow": slow_against[sid],
+            "confusion_slow": max(slow_elsewhere) if slow_elsewhere else 0.0,
             "against": against,
         })
     return hunt, rows
@@ -315,6 +408,12 @@ def summarise(rows, out):
         line += (f"; confusion worst {confused['confusion']:.3f} "
                  f"({confused['id']} on {confused['confused_with']})")
     print(line, file=out)
+    # And the same hunt on a phone that dropped to the smaller working frame,
+    # which is the frame the judgement below is made on where it is worse.
+    slow_low = min(r["attainable_slow"] for r in rows)
+    slow_conf = max(r["confusion_slow"] for r in rows)
+    print(f"on a slow phone ({WORK_PX_SLOW} px): attainable worst {slow_low:.3f}, "
+          f"confusion worst {slow_conf:.3f}", file=out)
 
 
 def judge(rows, floor, out=sys.stderr):
@@ -326,16 +425,19 @@ def judge(rows, floor, out=sys.stderr):
     if floor <= 0:
         print(f"{len(rows)} stencils measured, none judged (--floor 0)", file=out)
         return 0
-    low = [r for r in rows if r["attainable"] < floor]
-    confused = [r for r in rows if r["confusion"] >= CONFUSION]
+    low = [r for r in rows if min(r["attainable"], r["attainable_slow"]) < floor]
+    confused = [r for r in rows if max(r["confusion"], r["confusion_slow"]) >= CONFUSION]
     if low:
         print(f"audit: under the {floor:g} floor: "
-              + ", ".join(f"{r['id']} ({r['attainable']:.3f})" for r in low)
+              + ", ".join(f"{r['id']} ({min(r['attainable'], r['attainable_slow']):.3f})"
+                          for r in low)
               + " — photograph these again, with a subject that stands out"
                 " from what is round it", file=out)
     if confused:
         print(f"audit: passes in the wrong place: "
-              + ", ".join(f"{r['id']} ({r['confusion']:.3f} on {r['confused_with']})"
+              + ", ".join(f"{r['id']} "
+                          f"({max(r['confusion'], r['confusion_slow']):.3f} "
+                          f"on {r['confused_with']})"
                           for r in confused),
               file=out)
     return 1 if low or confused else 0
