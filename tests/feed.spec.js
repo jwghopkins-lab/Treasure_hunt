@@ -23,10 +23,17 @@ async function openWithFeed(y4m, huntPath) {
   page.on("pageerror", (e) => errors.push(String(e)));
   await page.addInitScript(INIT);
   await page.addInitScript(() => { localStorage.setItem("treasure.name", "Ada"); });
-  stubBoard(page);
+  const log = stubBoard(page);
   await page.goto(huntPath);
   await expect(page.locator("#s-main")).toBeVisible();
-  return { browser, page, errors };
+  return { browser, page, errors, log };
+}
+
+// The one row the opening posted, once it has arrived: the screen closes
+// before the request is on the wire.
+async function attemptOf(log) {
+  await expect.poll(() => log.attempts.length, { timeout: 5000 }).toBe(1);
+  return log.attempts[0];
 }
 
 async function expectPass(page, id, within) {
@@ -56,7 +63,7 @@ test.describe("the fake camera", () => {
   for (const s of FIX.stencils) {
     test(`the ${s.id} stencil passes against its own photograph within three seconds`, async () => {
       test.setTimeout(90000);
-      const { browser, page, errors } = await openWithFeed(`fixture-${s.id}.y4m`, "fixture/");
+      const { browser, page, errors, log } = await openWithFeed(`fixture-${s.id}.y4m`, "fixture/");
       try {
         const r = await expectPass(page, s.id, 3000);
         expect(r.size).toEqual([600, 800]);
@@ -65,6 +72,30 @@ test.describe("the fake camera", () => {
         const strong = vibes.filter((v) => Array.isArray(v.p));
         expect(strong.length).toBe(1);
         expect(strong[0]).toEqual({ p: [60, 50, 60], inTap: false });
+        // And the opening's record went to the telemetry drop: a match, on
+        // one of the three lines, with the numbers the scorer saw.
+        const a = await attemptOf(log);
+        expect(a.outcome).toBe("match");
+        expect([0.3, 0.25, 0.2]).toContain(a.line);
+        expect(a.hunt).toBe("fixture");
+        expect(a.stencil).toBe(s.id);
+        expect(a.name).toBe("Ada");
+        expect(a.run_id).toMatch(/^[0-9a-f-]{36}$/);
+        expect(a.peak).toBeGreaterThan(0.2);
+        expect(a.peak_smooth).toBeGreaterThanOrEqual(a.line);
+        expect(a.peak_on).toBeGreaterThan(a.peak_off);
+        expect(a.evals).toBeGreaterThan(0);
+        expect(a.above_ms).toBeGreaterThan(0);
+        expect(a.ms).toBeGreaterThan(0);
+        expect(a.hinted).toBe(false);
+        expect([320, 240]).toContain(a.work_px);
+        expect(a.frame).toMatch(/^\d+x\d+$/);
+        expect(typeof a.trace).toBe("string");
+        // A located stencil carries how far the mocked phone stood from it;
+        // an unlocated one carries nothing about where the phone was.
+        if (s.location) { expect(a.dist_m).toBeGreaterThan(0); expect(a.acc_m).toBe(20); }
+        else { expect(a.dist_m).toBe(null); expect(a.acc_m).toBe(null); }
+        expect(a.opened_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
         expect(errors).toEqual([]);
       } finally {
         await browser.close();
@@ -75,7 +106,7 @@ test.describe("the fake camera", () => {
   test("the hint changes nothing for the scorer: the door still passes with it showing", async () => {
     test.setTimeout(90000);
     const door = FIX.stencils.find((s) => s.hint);
-    const { browser, page, errors } = await openWithFeed(`fixture-${door.id}.y4m`, "fixture/");
+    const { browser, page, errors, log } = await openWithFeed(`fixture-${door.id}.y4m`, "fixture/");
     try {
       await page.locator(`#grid .tile[data-id="${door.id}"]`).click();
       await expect(page.locator("#lens")).toBeVisible();
@@ -84,6 +115,10 @@ test.describe("the fake camera", () => {
       await expect(page.locator("#lenswash")).toBeVisible({ timeout: 3000 });
       await expect(page.locator("#lens")).toBeHidden({ timeout: 2500 });
       await expect(page.locator(`#grid .tile[data-id="${door.id}"]`)).toHaveClass(/passed/);
+      // The record says the hint was showing.
+      const a = await attemptOf(log);
+      expect(a.outcome).toBe("match");
+      expect(a.hinted).toBe(true);
       expect(errors).toEqual([]);
     } finally {
       await browser.close();
@@ -139,7 +174,7 @@ test.describe("the fake camera", () => {
 
   test("a blank grey feed does not pass in ten seconds", async () => {
     test.setTimeout(60000);
-    const { browser, page, errors } = await openWithFeed("grey.y4m", "fixture/");
+    const { browser, page, errors, log } = await openWithFeed("grey.y4m", "fixture/");
     try {
       await page.locator(`#grid .tile[data-id="${FIX.stencils[0].id}"]`).click();
       await expect(page.locator("#lens")).toBeVisible();
@@ -149,6 +184,23 @@ test.describe("the fake camera", () => {
       const st = await page.evaluate(() => window.Lens.stats());
       expect(st.score == null || st.score < 0.25).toBe(true);
       expect(await page.evaluate(() => window.__th.state().done)).toEqual({});
+      // Nothing was posted while the screen was open; a back posts a record
+      // that says what the ten seconds were: a low score that never reached
+      // the lowest line, one trace value a second.
+      expect(log.attempts).toEqual([]);
+      await page.locator("#lensback").click();
+      await expect(page.locator("#lens")).toBeHidden();
+      const a = await attemptOf(log);
+      expect(a.outcome).toBe("back");
+      expect(a.line).toBe(null);
+      expect(a.ms).toBeGreaterThanOrEqual(9500);
+      expect(a.peak).toBeLessThan(0.25);
+      expect(a.above_ms).toBe(0);
+      expect(a.evals).toBeGreaterThan(20);
+      const trace = a.trace.split(",");
+      expect(trace.length).toBeGreaterThanOrEqual(9);
+      expect(trace.length).toBeLessThanOrEqual(12);
+      for (const v of trace) expect(Number(v)).toBeLessThan(25);
       expect(errors).toEqual([]);
     } finally {
       await browser.close();

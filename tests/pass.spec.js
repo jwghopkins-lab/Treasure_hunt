@@ -12,10 +12,11 @@ async function skipTile(page, id) {
 }
 
 test.describe("the pass", () => {
+  let log = null;
   test.beforeEach(async ({ page }) => {
     await prepare(page);
     await withName(page);
-    stubBoard(page);
+    log = stubBoard(page);
     await page.goto("fixture/");
     await expect(page.locator("#s-main")).toBeVisible();
   });
@@ -28,6 +29,9 @@ test.describe("the pass", () => {
     await expect(page.locator("#lenswash")).toHaveText("Complete!");
     await expect(page.locator("#lens")).toBeHidden({ timeout: 2000 });
     expect(Date.now() - t0).toBeLessThan(2000);
+    // A skip is recorded as a skip, on no line, once the screen has gone.
+    await expect.poll(() => log.attempts.length, { timeout: 5000 }).toBe(1);
+    expect(log.attempts[0]).toMatchObject({ outcome: "skip", line: null, stencil: id, hunt: "fixture" });
     const tile = page.locator(`#grid .tile[data-id="${id}"]`);
     await expect(tile).toHaveClass(/passed/);
     await expect(tile.locator(".badge svg")).toHaveCount(1);

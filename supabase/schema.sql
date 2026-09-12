@@ -64,3 +64,59 @@ create policy "anyone may move their run on" on progress
   for update to anon using (true) with check (true);
 create policy "anyone may read the board" on progress
   for select to anon using (true);
+
+-- Added after the second walk: what happened on the camera screen, one row
+-- per opening, so the pass lines and the stencils can be tuned on what
+-- players actually saw rather than on what the audit predicts. The phone
+-- posts it as the screen closes and never reads it back; the session reads
+-- it through the connector. A row names its player and run, as the board's
+-- rows do. `trace` is the smoothed score once a second, 0 to 99, the last
+-- eight minutes of the opening, a blank for a second in which nothing was
+-- evaluated (the camera not yet up, the page hidden). `dist_m` is how far
+-- the phone was from where the photograph was taken, for a located stencil,
+-- capped at a thousand kilometres, and no position is kept.
+create table attempts (
+  id uuid primary key default gen_random_uuid(),
+  run_id uuid not null,
+  hunt text not null check (length(hunt) between 1 and 40),
+  stencil text not null check (length(stencil) between 1 and 40),
+  name text check (length(name) between 1 and 24),
+  outcome text not null check (outcome in ('match', 'skip', 'back')),
+  line real check (line >= 0 and line <= 1),
+  ms integer not null check (ms between 0 and 86400000),
+  evals integer not null check (evals between 0 and 100000),
+  peak real not null check (peak >= 0 and peak <= 1),
+  peak_on real check (peak_on >= 0 and peak_on <= 100),
+  peak_off real check (peak_off >= 0 and peak_off <= 100),
+  peak_smooth real not null check (peak_smooth >= 0 and peak_smooth <= 1),
+  last_smooth real check (last_smooth >= 0 and last_smooth <= 1),
+  above_ms integer not null check (above_ms between 0 and 86400000),
+  hinted boolean not null default false,
+  work_px integer check (work_px in (240, 320)),
+  eval_ms real check (eval_ms >= 0 and eval_ms <= 60000),
+  frame text check (length(frame) <= 16),
+  dist_m real check (dist_m >= 0 and dist_m <= 1000000),
+  acc_m real check (acc_m >= 0 and acc_m <= 1000000),
+  trace text check (length(trace) <= 2000),
+  opened_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+create index on attempts (hunt, stencil, opened_at);
+alter table attempts enable row level security;
+create policy "the phone may post an attempt" on attempts
+  for insert to anon with check (true);
+-- no select for anon: the rows say which stencils are weak and where people
+-- stood, and only the session reads them.
+
+-- What to ask it. Per stencil, how often an opening ended in a pass, the
+-- typical best score and the typical time spent:
+--   select hunt, stencil, count(*) as openings,
+--          round(avg((outcome = 'match')::int), 2) as pass_rate,
+--          round(percentile_cont(0.5) within group (order by peak)::numeric, 3) as peak_median,
+--          round(percentile_cont(0.5) within group (order by ms) / 1000) as secs_median
+--     from attempts group by 1, 2 order by 1, pass_rate, 2;
+-- And the openings that ended in a back with a score near the line, which
+-- are the ones a lower line would have passed:
+--   select hunt, stencil, name, peak_smooth, above_ms, ms, trace
+--     from attempts where outcome = 'back' and peak_smooth >= 0.15
+--    order by opened_at;

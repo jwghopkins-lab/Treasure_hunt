@@ -555,9 +555,16 @@ function openCamera(s) {
   STATE.started[s.id] = true;
   saveState();
   paintClock();
+  // The last fix the distance line saw, for the record: how far the phone
+  // was from where the photograph was taken when the screen closed.
+  const line = s.location ? distanceLineTo(s.location) : null;
+  let fix = null;
   window.Lens.open(s, {
     testMode: !!HUNT.test_mode,
-    distanceLine: s.location ? distanceLineTo(s.location) : null,
+    distanceLine: line ? (lat, lon, acc) => {
+      fix = { d: haversineM(lat, lon, s.location.lat, s.location.lon), acc: acc || 0 };
+      return line(lat, lon, acc);
+    } : null,
     hinted: !!STATE.hints[s.id],
     // The hint is paid for once, on the tap, and the clock shows it at once.
     onHint: () => {
@@ -577,8 +584,40 @@ function openCamera(s) {
       postProgress();
       if (allDone() && SUPABASE) syncBoard();
     },
+    onAttempt: (row) => postAttempt(s, row, fix),
     onClose: () => renderMain(),
   });
+}
+
+/* ---- telemetry ----
+   One row per opening of the camera screen: how it ended, the best the
+   scorer saw, how long the score sat near the line, and the shape of it over
+   time. Posted as the screen closes and never read back by the phone; the
+   session reads it through the connector, to tune the pass lines and the
+   stencils on what players actually saw. Fire and forget, like progress: a
+   post that fails is a row lost, and nothing on the phone waits for it. The
+   only place the phone is sent along is as a distance to the photograph's
+   spot, not a position. */
+function postAttempt(s, row, fix) {
+  if (!SUPABASE || !STATE.run_id || !row) return Promise.resolve();
+  const clamp = (v, hi) => (v == null ? null : Math.max(0, Math.min(hi, Math.round(v))));
+  const body = Object.assign({}, row, {
+    run_id: STATE.run_id, hunt: HUNT.id, stencil: s.id,
+    name: getName() || null,
+    ms: clamp(row.ms, MAX_POST_MS), evals: clamp(row.evals, 100000),
+    above_ms: clamp(row.above_ms, MAX_POST_MS),
+    // Capped at a thousand kilometres, which is the schema's cap: a phone
+    // that far away is not at the hunt, and the row is worth more than the
+    // exact figure. Every field here has to clear its check, because a row
+    // the table refuses is the whole opening lost, and nothing would say so.
+    dist_m: fix ? clamp(fix.d, 1000000) : null,
+    acc_m: fix ? clamp(fix.acc, 1000000) : null,
+  });
+  return sbFetch("/rest/v1/attempts", {
+    method: "POST", keepalive: true,
+    headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+    body: JSON.stringify(body),
+  }).catch(() => {});
 }
 
 /* ---- the leaderboard, on Supabase ----

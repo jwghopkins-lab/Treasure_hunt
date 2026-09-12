@@ -235,6 +235,27 @@ board marks it. The board is fetched when the screen opens; while a fetch is
 in flight the screen shows what the last one found, and a fetch that fails
 leaves it as it was, with no spinner and no error text.
 
+## Telemetry
+
+Every opening of the camera screen posts one row to `attempts` as it
+closes. The row is not anonymous: it carries the player's chosen name and
+the run's id, as the leaderboard rows do. With them go how the opening
+ended (`match`, `skip` or `back`), which pass line a match came from, how long the screen was open, how many evaluations ran, the best
+score the scorer saw and what was under and beside the lines at that moment,
+how long the smoothed score sat at or above the lowest line, whether the
+hint was showing, the working frame the phone settled on and what an
+evaluation cost it, and `trace`, the smoothed score once a second for the
+last eight minutes of the opening, a blank for any second in which nothing
+was evaluated (the camera not yet up, the page hidden). For a
+located stencil `dist_m` is how far the phone was from where the photograph
+was taken when the screen closed; no position is kept. The phone never reads
+the table and the anon key cannot; the session reads it through the
+connector, and `supabase/schema.sql` ends with the two queries to start
+from. It exists so that the pass lines and the choice of stencils can be
+tuned on what players saw rather than on what the audit predicts: the audit
+says what a stencil can score against its own photograph, and this says what
+it did score against the room.
+
 ## The hint
 
 A stencil may carry a `hint`: the same picture with twice as much of it

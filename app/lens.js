@@ -20,6 +20,8 @@
      hinted        true if the hint was already taken for this stencil
      onHint        () => void, the hint was taken, inside the tap
      onPass        (how) => void, called once, inside the pass, how is "match" or "skip"
+     onAttempt     (row) => void, called once as the screen closes, with the
+                   opening's record: how it ended and what the scorer saw
      onClose       () => void, the screen has closed, back or after the pass */
 (function () {
   "use strict";
@@ -39,6 +41,7 @@
   const PASS_LINES = [[0.30, 600], [0.25, 1000], [0.20, 2000]];
   const BAR_FULL = 0.30;            // the score at which the bar is all the way across
   const COMPLETE_MS = 1500;         // how long Complete! stays before the screen closes itself
+  const TRACE_MAX = 480;            // one smoothed score a second, the last eight minutes of an opening
 
   let root = null;        // the full-screen container, built once and reused
   let stream = null;      // the live camera tracks, so they can all be stopped
@@ -148,6 +151,10 @@
   /* ---- opening and closing ---- */
   async function open(stencil, opts) {
     if (!root) build();
+    // Opened over an opening that is still up — a tile's Enter key repeated,
+    // say — the earlier one closes as a back first, record and all, and its
+    // Complete! timer goes with it rather than firing into this one.
+    if (isOpen()) close("back");
     cfg = { stencil, opts: opts || {} };
     root.classList.add("on");
     const img = q("#lensstencil");
@@ -221,18 +228,26 @@
     m.hidden = false;
   }
 
-  function close() {
+  // A close is a back unless a pass got there first, in which case the pass
+  // left its record on cfg. Either way the record leaves with the screen,
+  // once, after the screen has gone: the page's handler posts it and must
+  // not find the camera still there.
+  function close(reason) {
+    const row = cfg ? (cfg.attempt || summary(reason || "back")) : null;
+    if (cfg) cfg.attempt = null;
     stopMatch();
     stopWatch();
     clearTimeout(completeTimer);
     completeTimer = null;
     generation += 1;
     stopStream();
-    if (!root) return;
-    const video = q("#lensfeed");
-    video.srcObject = null;
-    q("#lenswash").hidden = true;
-    root.classList.remove("on");
+    if (root) {
+      const video = q("#lensfeed");
+      video.srcObject = null;
+      q("#lenswash").hidden = true;
+      root.classList.remove("on");
+    }
+    if (row && cfg && cfg.opts.onAttempt) cfg.opts.onAttempt(row);
   }
 
   /* ---- the stencil, fixed ----
@@ -309,6 +324,68 @@
     if (charge && cfg.opts.onHint) cfg.opts.onHint();
   }
 
+  /* ---- the opening's record ----
+     What the page posts as telemetry when the screen closes, kept here
+     because only the match loop sees the numbers. The trace is the smoothed
+     score once a second, 0 to 99, the last eight minutes of it, counted from
+     the moment the screen opened; a second with no evaluation in it — the
+     camera not yet up, the page hidden, the phone asleep — is left blank
+     rather than filled, so a gap reads as a gap. A screen whose camera never
+     arrived has an empty trace and no evaluations at all. */
+  function record(best, now, w, h) {
+    match.evals += 1;
+    if (best.score > match.peak) { match.peak = best.score; match.peakOn = best.on; match.peakOff = best.off; }
+    if (match.smooth > match.peakSmooth) match.peakSmooth = match.smooth;
+    match.w = w; match.h = h;
+    if (match.pass.passed && match.line == null) {
+      const i = PASS_LINES.findIndex(([, hold], j) => match.pass.since[j] != null && now - match.pass.since[j] >= hold);
+      match.line = i < 0 ? null : PASS_LINES[i][0];
+    }
+    // Time at or above the lowest line, counted as evaluated time only: a
+    // tick that arrives after a gap — the page hidden, the phone asleep —
+    // credits at most two ticks' worth, never the gap, which is how the pass
+    // rule sees it too (its timers start at that same returning tick).
+    const lowest = PASS_LINES[PASS_LINES.length - 1][0];
+    if (match.lastAt != null && match.smooth >= lowest) {
+      match.aboveMs += Math.min(now - match.lastAt, 2 * MATCH_EVERY_MS);
+    }
+    match.lastAt = now;
+    const sec = Math.floor((now - match.t0) / 1000);
+    if (sec - match.traceSecs > TRACE_MAX) {
+      // Hidden for longer than the trace holds: nothing before is worth keeping.
+      match.trace.length = 0;
+      match.traceSecs = sec - TRACE_MAX;
+    }
+    while (match.traceSecs <= sec) {
+      match.trace.push(match.traceSecs === sec ? Math.round(match.smooth * 99) : null);
+      match.traceSecs += 1;
+      if (match.trace.length > TRACE_MAX) match.trace.shift();
+    }
+  }
+
+  // The record as one plain object, read before stopMatch takes it away.
+  // Rounded to three places: these are scores, not measurements.
+  function summary(outcome) {
+    if (!match) return null;
+    const r3 = (v) => (v == null ? null : Math.round(v * 1000) / 1000);
+    const slow = [...match.slow].sort((a, b) => a - b);
+    return {
+      outcome,
+      line: outcome === "match" ? match.line : null,
+      ms: Date.now() - match.openedAt,
+      evals: match.evals,
+      peak: r3(match.peak), peak_on: r3(match.peakOn), peak_off: r3(match.peakOff),
+      peak_smooth: r3(match.peakSmooth), last_smooth: r3(match.smooth),
+      above_ms: Math.round(match.aboveMs),
+      hinted: !!root && !q("#lenshint").hidden,
+      work_px: match.workPx,
+      eval_ms: slow.length ? r3(slow[Math.floor(slow.length / 2)]) : r3(match.ms),
+      frame: match.w ? match.w + "x" + match.h : null,
+      trace: match.trace.map((v) => (v == null ? "" : String(v))).join(","),
+      opened_at: new Date(match.openedAt).toISOString(),
+    };
+  }
+
   /* ---- the pass ---- */
   // The rule as one pure function: the timers so far, the smoothed score, the
   // time now; back come the timers and whether it passed. A line's timer
@@ -326,6 +403,9 @@
 
   function pass(how) {
     if (!isOpen() || completeTimer) return;
+    // The record is taken here, while the match still holds it; the screen
+    // hands it on when it closes, after Complete! has had its moment.
+    cfg.attempt = summary(how);
     stopMatch();
     stopWatch();
     if (cfg.opts.onPass) cfg.opts.onPass(how);
@@ -355,11 +435,19 @@
     stopMatch();
     match = {
       smooth: null, on: 0, off: 0, best: 0, ms: null,
-      pass: { since: [], passed: false },
+      pass: { since: [], passed: false }, line: null,
       workPx: WORK_PX, slow: [],
       frame: document.createElement("canvas"), stencil: document.createElement("canvas"),
       masks: null, maskKey: "", native: new Map(), rebuilt: false,
       timer: null,
+      // The opening's own record, for the row the page posts when the
+      // screen closes: when it opened, how many evaluations it ran, the best
+      // the scorer ever saw and what was under and beside the lines then,
+      // how long the smoothed score sat at or above the lowest pass line,
+      // and one smoothed score a second for the shape of the whole thing.
+      openedAt: Date.now(), t0: performance.now(), evals: 0,
+      peak: 0, peakOn: 0, peakOff: 0, peakSmooth: 0,
+      aboveMs: 0, lastAt: null, trace: [], traceSecs: 0, w: 0, h: 0,
     };
     paintBar();
     match.timer = setInterval(matchTick, MATCH_EVERY_MS);
@@ -404,6 +492,7 @@
 
     const now = performance.now();
     match.pass = passRule(match.pass, match.smooth, now);
+    record(best, now, w, h);
 
     // Keep each evaluation cheap. A phone that cannot manage it at 320 px
     // drops to 240 px and stays there for the rest of the screen. Only the
@@ -735,6 +824,7 @@
                      recent: match.slow.map((v) => Math.round(v * 10) / 10),
                      workPx: match.workPx, score: match.smooth, best: match.best,
                      on: match.on, off: match.off, since: match.pass.since,
+                     evals: match.evals, peak: match.peak, traceLen: match.trace.length,
                      rect, place, hinted: !q("#lenshint").hidden }
                  : { rect, place, score: null };
   }

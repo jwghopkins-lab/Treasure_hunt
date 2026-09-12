@@ -124,10 +124,11 @@ async function wearAlpha(page, left, right) {
 
 
 test.describe("the camera screen", () => {
+  let log = null;
   test.beforeEach(async ({ page }) => {
     await prepare(page);
     await withName(page);
-    stubBoard(page);
+    log = stubBoard(page);
   });
 
   test("shows the stencil fixed over the video, the bar at the top, the clue, the back button and no other controls", async ({ page }) => {
@@ -385,6 +386,16 @@ test.describe("the camera screen", () => {
     expect(await page.evaluate(() => window.__geo.watches)).toBe(1);
     await page.locator("#lensback").click();
     expect(await page.evaluate(() => window.__geo.clears)).toBe(1);
+    // The record carries the last fix as a distance to the photograph's spot
+    // and its accuracy, even the poor one the line went blank on, and no
+    // position at all.
+    await expect.poll(() => log.attempts.length, { timeout: 5000 }).toBe(1);
+    const a = log.attempts[0];
+    expect(a.outcome).toBe("back");
+    expect(a.dist_m).toBeGreaterThan(230);
+    expect(a.dist_m).toBeLessThan(250);
+    expect(a.acc_m).toBe(100);
+    expect(Object.keys(a)).not.toEqual(expect.arrayContaining(["lat", "lon"]));
   });
 
   test("an unlocated stencil shows no line and asks for no permission", async ({ page }) => {

@@ -56,10 +56,16 @@ async function withName(page, name) {
 // rows, and can be made to fail.
 function stubBoard(page, opts) {
   const o = Object.assign({ rows: [], failPost: false, failGet: false }, opts || {});
-  const log = { posts: [], gets: 0 };
+  const log = { posts: [], gets: 0, attempts: [] };
   page.route("https://stub.supabase.co/**", async (route) => {
     const req = route.request();
     const url = req.url();
+    // The telemetry drop: every opening of the camera screen posts a row
+    // here as it closes, and a test reads what it said.
+    if (url.includes("/rest/v1/attempts") && req.method() === "POST") {
+      log.attempts.push(req.postDataJSON());
+      return route.fulfill({ status: 201, body: "" });
+    }
     if (url.includes("/rest/v1/completions")) {
       if (req.method() === "POST") {
         log.posts.push({ body: req.postDataJSON(), headers: req.headers() });
