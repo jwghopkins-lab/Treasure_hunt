@@ -6,24 +6,15 @@
     "bounds": [
       [
         51.4719,
-        -0.1073
+        -0.1068
       ],
       [
-        51.4758,
-        -0.1014
+        51.4755,
+        -0.1015
       ]
     ]
   },
   "stencils": [
-    {
-      "id": "shot-1",
-      "src": "img/fields1/shot-1-stencil.png",
-      "location": {
-        "lat": 51.473233684596,
-        "lon": -0.104032395737618
-      },
-      "hint": "img/fields1/shot-1-stencil-hint.png"
-    },
     {
       "id": "shot-2",
       "src": "img/fields1/shot-2-stencil.png",
@@ -43,24 +34,6 @@
       "hint": "img/fields1/shot-3-stencil-hint.png"
     },
     {
-      "id": "shot-4",
-      "src": "img/fields1/shot-4-stencil.png",
-      "location": {
-        "lat": 51.4733400386161,
-        "lon": -0.105136846172675
-      },
-      "hint": "img/fields1/shot-4-stencil-hint.png"
-    },
-    {
-      "id": "shot-5",
-      "src": "img/fields1/shot-5-stencil.png",
-      "location": {
-        "lat": 51.4740023011335,
-        "lon": -0.104445677037462
-      },
-      "hint": "img/fields1/shot-5-stencil-hint.png"
-    },
-    {
       "id": "shot-6",
       "src": "img/fields1/shot-6-stencil.png",
       "location": {
@@ -68,24 +41,6 @@
         "lon": -0.10462262833759
       },
       "hint": "img/fields1/shot-6-stencil-hint.png"
-    },
-    {
-      "id": "shot-7",
-      "src": "img/fields1/shot-7-stencil.png",
-      "location": {
-        "lat": 51.4742885354596,
-        "lon": -0.104252444709283
-      },
-      "hint": "img/fields1/shot-7-stencil-hint.png"
-    },
-    {
-      "id": "shot-8",
-      "src": "img/fields1/shot-8-stencil.png",
-      "location": {
-        "lat": 51.4744950710007,
-        "lon": -0.103588880315753
-      },
-      "hint": "img/fields1/shot-8-stencil-hint.png"
     }
   ]
 }
