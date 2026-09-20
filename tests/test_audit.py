@@ -29,6 +29,7 @@ the floor and a stencil that passes in another room is still refused, and
 the refusal says which stencil and which photograph.
 """
 
+import io
 import json
 import random
 import shutil
@@ -389,6 +390,28 @@ class RuleTest(unittest.TestCase):
         self.assertEqual(audit.lines_for(0.30, 0.15), [0.27, 0.225, 0.18])
         self.assertIsNone(audit.lines_for(0.30, 0.19))
 
+    def test_lines_go_up_for_a_strong_stencil_that_confuses(self):
+        # A wrong-place score over the line is answered with higher lines
+        # where the stencil can afford them: a top line no higher than two
+        # thirds of what it attains, the share the standard top is of 0.45.
+        self.assertEqual(audit.lines_for(0.60, 0.227), [0.385, 0.321, 0.257])
+        self.assertEqual(audit.lines_for(0.60, 0.19), [0.33, 0.275, 0.22])
+        # It can afford part of the margin: it gets that part.
+        self.assertEqual(audit.lines_for(0.46, 0.19), [0.307, 0.256, 0.204])
+        # It cannot afford any, and it is over the line: no lines would do.
+        self.assertIs(audit.lines_for(0.50, 0.227), False)
+        self.assertIs(audit.lines_for(0.68, 0.30), False)
+        # Exactly the standard lines are still "standard", not a copy of them.
+        self.assertIsNone(audit.lines_for(0.45, 0.17))
+        # The player will not take a line over 1, and no stencil attains
+        # enough to ask for one: the top line is at most two thirds of that.
+        for att in (0.6, 0.8, 1.0):
+            for conf in (0.0, 0.2, 0.3, 0.4, 0.6):
+                lines = audit.lines_for(att, conf)
+                if lines:
+                    self.assertLessEqual(lines[0], round(att * 2 / 3, 3) + 0.001, (att, conf, lines))
+                    self.assertGreater(lines[-1], conf + audit.LINE_MARGIN - 0.001, (att, conf, lines))
+
     def row(self, sid, att, conf, off=0.05, slow=None):
         return {"id": sid, "attainable": att, "attainable_slow": att if slow is None else slow,
                 "confusion": conf, "confusion_slow": conf, "confused_with": "other",
@@ -397,8 +420,11 @@ class RuleTest(unittest.TestCase):
     def test_verdicts_drop_the_weak_and_the_confusable_and_line_the_hard(self):
         rows = [self.row("strong", 0.6, 0.10), self.row("busy", 0.30, 0.05, off=0.25),
                 self.row("hard", 0.40, 0.10, slow=0.38), self.row("twin", 0.50, 0.22),
-                self.row("slowweak", 0.40, 0.05, slow=0.30)]
+                self.row("slowweak", 0.40, 0.05, slow=0.30), self.row("tall", 0.60, 0.227)]
         said = {v["id"]: v for v in audit.verdicts(rows, 0.35)}
+        # Strong enough to afford lines over the wrong-place score: kept on them.
+        self.assertTrue(said["tall"]["keep"])
+        self.assertEqual(said["tall"]["lines"], [0.385, 0.321, 0.257])
         self.assertTrue(said["strong"]["keep"]); self.assertIsNone(said["strong"]["lines"])
         self.assertFalse(said["busy"]["keep"])
         self.assertIn("under the 0.35 floor", said["busy"]["why"])
@@ -407,12 +433,33 @@ class RuleTest(unittest.TestCase):
         self.assertEqual(said["hard"]["lines"], audit.lines_for(0.38, 0.10))
         self.assertFalse(said["twin"]["keep"])
         self.assertIn("in front of other", said["twin"]["why"])
+        self.assertIn("attains too little (0.500)", said["twin"]["why"])
         # The worse frame decides: a stencil that only fails on a slow phone fails.
         self.assertFalse(said["slowweak"]["keep"])
         # With the floor off, everything stays, and the weak one gets lines.
         off = {v["id"]: v for v in audit.verdicts(rows, 0)}
         self.assertTrue(all(v["keep"] for v in off.values()))
         self.assertEqual(off["busy"]["lines"], [0.225, 0.188, 0.15])
+        # The one that could not afford its lines plays the standard ones.
+        self.assertIsNone(off["twin"]["lines"])
+
+    def test_the_audit_judges_a_wrong_place_score_against_the_lines_the_stencil_plays(self):
+        # A hunt file that gives a stencil raised lines has answered its
+        # wrong-place score already; the same score on standard lines is a
+        # stencil that passes in the wrong place.
+        raised = dict(self.row("tall", 0.60, 0.227), lines=[0.385, 0.321, 0.257])
+        plain = self.row("tall", 0.60, 0.227)
+        quiet = io.StringIO()
+        self.assertEqual(audit.judge([raised], 0.35, out=quiet), 0, quiet.getvalue())
+        self.assertNotIn("wrong place", quiet.getvalue())
+        loud = io.StringIO()
+        self.assertEqual(audit.judge([plain], 0.35, out=loud), 1)
+        self.assertIn("passes in the wrong place: tall (0.227 on other)", loud.getvalue())
+        # Lines that do not cover the score are named beside it.
+        low = dict(self.row("tall", 0.60, 0.227), lines=[0.30, 0.25, 0.20])
+        said = io.StringIO()
+        self.assertEqual(audit.judge([low], 0.35, out=said), 1)
+        self.assertIn("over its 0.2 line", said.getvalue())
 
     def test_why_weak_names_the_ring_first_then_the_frame_then_the_edges(self):
         self.assertIn("busy beside its lines", audit.why_weak(self.row("a", 0.2, 0.1, off=0.21), None))

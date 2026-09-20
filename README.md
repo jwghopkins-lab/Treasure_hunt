@@ -165,18 +165,26 @@ compare with.
 
 The runner does this before it commits. `from_captures.py` cuts every
 photograph, measures them all together, and publishes only the ones that
-clear the floor and confuse with nothing: the rest are left out, their files
-with them, and the log says which and why, as far as the numbers can tell
-(a busy ring beside the lines, too little in the frame, faint edges). So
-capture more than you need and let the build choose. A stencil that clears
-the floor but attains under 0.45 is published with its own three pass lines,
-lower than the standard 0.30, 0.25 and 0.20 by the same factor, never under
-three quarters of them and never so low that the lowest comes within 0.03 of
-the stencil's worst wrong-place score; they are written into the hunt file
-as `lines` and the camera screen plays that stencil on them. In the field a
-stencil reaches about two thirds of its attainable score, which is what
-these numbers are set from. Hunts built before this play on the standard
-lines until they are rebuilt.
+clear the floor and cannot be passed in the wrong place: the rest are left
+out, their files with them, and the log says which and why, as far as the
+numbers can tell (a busy ring beside the lines, too little in the frame,
+faint edges, a wrong-place score the stencil is too weak to be lined
+against). So capture more than you need and let the build choose.
+
+A published stencil may carry its own three pass lines, written into the
+hunt file as `lines`, and the camera screen plays it on them. They go down
+for a hard stencil: one that clears the floor but attains under 0.45 gets
+the standard 0.30, 0.25 and 0.20 lowered by the same factor, never under
+three quarters of them. They go up for a stencil that scores in front of
+another photograph: the lowest line is kept 0.03 above its worst wrong-place
+score, as far as the stencil can afford, which is a top line at two thirds
+of what it attains, the share the standard top is of a stencil attaining
+0.45. A stencil that cannot afford the whole margin plays what it can while
+its wrong-place score is under 0.20, and is left out once it is over. In
+the field a stencil reaches about two thirds of its attainable score, which
+is what these numbers are set from. The audit judges a wrong-place score
+against the lines the stencil carries. Hunts built before this play on the
+standard lines until they are rebuilt.
 
 The capture page judges each photograph before it goes up, with the same
 arithmetic run on the photograph against itself (`Lens.assess`, mirrored by

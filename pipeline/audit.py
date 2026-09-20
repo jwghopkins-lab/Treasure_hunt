@@ -300,16 +300,35 @@ def score(E, aligns):
 
 
 def lines_for(attainable, confusion):
-    """The pass lines for one stencil, or None for the standard three. Both
-    numbers are the worse of the two working frames: a slow phone is a
-    player too."""
+    """The pass lines for one stencil: None for the standard three, a list
+    for its own, False when no lines would do. Both numbers are the worse of
+    the two working frames: a slow phone is a player too.
+
+    A hard stencil's lines come down with what it attains, never under three
+    quarters of standard. The lowest line stays a margin above the worst
+    wrong-place score, so the lines come down less, or go up: as far as the
+    stencil can afford, which is a top line at two thirds of what it attains
+    — the share the standard top is of a stencil attaining 0.45, and about
+    what a player reaches in the field. A stencil that cannot afford the
+    whole margin plays what it can afford while its wrong-place score is
+    under the confusion line, and gets no lines at all once it is over: that
+    one passes in the wrong place, and the build leaves it out."""
     f = max(LINE_MIN, min(1.0, attainable / LINE_FULL))
-    lowest = STANDARD_LINES[-1] * f
-    if confusion + LINE_MARGIN > lowest:
-        f = min(1.0, (confusion + LINE_MARGIN) / STANDARD_LINES[-1])
-    if f >= 1.0:
+    ceiling = max(1.0, attainable / LINE_FULL)
+    need = (confusion + LINE_MARGIN) / STANDARD_LINES[-1]
+    if need > f:
+        if need > ceiling + 1e-9 and confusion >= CONFUSION:
+            return False
+        f = min(need, ceiling)
+    if abs(f - 1.0) < 1e-9:
         return None
     return [round(line * f, 3) for line in STANDARD_LINES]
+
+
+def lowest_line(row):
+    """The lowest pass line a stencil plays on: its own, or the standard."""
+    lines = row.get("lines")
+    return lines[-1] if lines else CONFUSION
 
 
 def assess(im):
@@ -396,17 +415,24 @@ def verdicts(rows, floor, assessed=None):
         att = min(r["attainable"], r["attainable_slow"])
         conf = max(r["confusion"], r["confusion_slow"])
         judged = (assessed or {}).get(r["id"])
+        lines = lines_for(att, conf)
         if floor > 0 and att < floor:
             out.append({"id": r["id"], "keep": False, "lines": None,
                         "why": f"attainable {att:.3f} is under the {floor:g} floor: "
                                + why_weak(r, judged)})
-        elif floor > 0 and conf >= CONFUSION:
+        elif floor > 0 and lines is False:
+            # Over the confusion line, and not strong enough for lines that
+            # would put it back under: raised lines are the first answer to
+            # a wrong-place score, and only a stencil that cannot afford them
+            # is left out for it.
             out.append({"id": r["id"], "keep": False, "lines": None,
                         "why": f"scores {conf:.3f} standing in front of {worst_partner(r)}, "
-                               f"over the {CONFUSION:g} line: it can be passed in the wrong "
-                               "place — a different subject, or the other one from further off"})
+                               f"over the {CONFUSION:g} line, and attains too little ({att:.3f}) "
+                               "for lines high enough to stop that: it can be passed in the "
+                               "wrong place — a different subject, or the other one from "
+                               "further off"})
         else:
-            out.append({"id": r["id"], "keep": True, "lines": lines_for(att, conf), "why": None})
+            out.append({"id": r["id"], "keep": True, "lines": lines or None, "why": None})
     return out
 
 
@@ -497,6 +523,9 @@ def measure(hunt_path, photos):
         rows.append({
             "id": sid,
             "photo": str(found[sid]),
+            # The lines the hunt file gives it, if any: the judgement below
+            # asks whether it passes in the wrong place on the lines it plays.
+            "lines": s.get("lines"),
             "attainable": attainable,
             "on": round(own_on, 3),
             "off": round(own_off, 3),
@@ -548,6 +577,14 @@ def summarise(rows, out):
     slow_conf = max(r["confusion_slow"] for r in rows)
     print(f"on a slow phone ({WORK_PX_SLOW} px): attainable worst {slow_low:.3f}, "
           f"confusion worst {slow_conf:.3f}", file=out)
+    # And which stencils the hunt file plays on lines of their own, since
+    # the judgement of a wrong-place score is made against those.
+    own = [r for r in rows if r.get("lines")]
+    if own:
+        print("own lines: " + ", ".join(
+            f"{r['id']} " + "/".join(f"{v:g}" for v in r["lines"])
+            + (" (raised)" if r["lines"][-1] > STANDARD_LINES[-1] else " (lowered)")
+            for r in own), file=out)
 
 
 def judge(rows, floor, out=sys.stderr):
@@ -560,7 +597,8 @@ def judge(rows, floor, out=sys.stderr):
         print(f"{len(rows)} stencils measured, none judged (--floor 0)", file=out)
         return 0
     low = [r for r in rows if min(r["attainable"], r["attainable_slow"]) < floor]
-    confused = [r for r in rows if max(r["confusion"], r["confusion_slow"]) >= CONFUSION]
+    confused = [r for r in rows
+                if max(r["confusion"], r["confusion_slow"]) >= lowest_line(r)]
     if low:
         print(f"audit: under the {floor:g} floor: "
               + ", ".join(f"{r['id']} ({min(r['attainable'], r['attainable_slow']):.3f})"
@@ -571,7 +609,9 @@ def judge(rows, floor, out=sys.stderr):
         print(f"audit: passes in the wrong place: "
               + ", ".join(f"{r['id']} "
                           f"({max(r['confusion'], r['confusion_slow']):.3f} "
-                          f"on {r['confused_with']})"
+                          f"on {r['confused_with']}"
+                          + (f", over its {lowest_line(r):g} line" if r.get("lines") else "")
+                          + ")"
                           for r in confused),
               file=out)
     return 1 if low or confused else 0

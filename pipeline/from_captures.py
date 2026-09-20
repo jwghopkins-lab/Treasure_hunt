@@ -416,8 +416,13 @@ def main(argv=None):
     print(f"published {len(kept)} of {len(stencils)}:", file=sys.stderr)
     for s in kept:
         lines = s.get("lines")
-        print(f"  {s['id']}: {numbers(s['id'])}, lines "
-              + ("/".join(f"{v:.3f}" for v in lines) if lines else "standard"), file=sys.stderr)
+        shown = "standard"
+        if lines:
+            shown = "/".join(f"{v:.3f}" for v in lines)
+            # Raised lines are the answer to a wrong-place score the stencil
+            # can afford; lowered ones are a hard stencil's due.
+            shown += " raised" if lines[-1] > audit.STANDARD_LINES[-1] else " lowered"
+        print(f"  {s['id']}: {numbers(s['id'])}, lines {shown}", file=sys.stderr)
     dropped = [(s, v) for s, v in zip(stencils, said) if not v["keep"]]
     if dropped:
         print(f"not published, {len(dropped)}:", file=sys.stderr)
