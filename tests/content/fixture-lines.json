@@ -1,0 +1,36 @@
+{
+  "id": "fixture-lines",
+  "name": "Fixture Lines",
+  "test_mode": false,
+  "stencils": [
+    {
+      "id": "door",
+      "src": "img/fixture/door-stencil.png",
+      "lines": [
+        0.225,
+        0.188,
+        0.15
+      ]
+    },
+    {
+      "id": "window",
+      "src": "img/fixture/window-stencil.png"
+    },
+    {
+      "id": "lamp",
+      "src": "img/fixture/lamp-stencil.png"
+    },
+    {
+      "id": "bench",
+      "src": "img/fixture/bench-stencil.png"
+    },
+    {
+      "id": "sign",
+      "src": "img/fixture/sign-stencil.png"
+    },
+    {
+      "id": "fountain",
+      "src": "img/fixture/fountain-stencil.png"
+    }
+  ]
+}

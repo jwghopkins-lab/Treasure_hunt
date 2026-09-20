@@ -77,6 +77,8 @@ test.describe("the fake camera", () => {
         const a = await attemptOf(log);
         expect(a.outcome).toBe("match");
         expect([0.3, 0.25, 0.2]).toContain(a.line);
+        // A portrait feed for a portrait stencil: nothing to turn.
+        expect(await page.evaluate(() => document.getElementById("lensturn").hidden)).toBe(true);
         expect(a.hunt).toBe("fixture");
         expect(a.stencil).toBe(s.id);
         expect(a.name).toBe("Ada");

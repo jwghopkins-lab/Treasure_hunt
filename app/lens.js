@@ -18,6 +18,7 @@
      testMode      true shows Skip
      distanceLine  (lat, lon, acc) => "About 240 m · NE", or "" for nothing
      hinted        true if the hint was already taken for this stencil
+     (the stencil may carry `lines`, its own three pass lines, from the build)
      onHint        () => void, the hint was taken, inside the tap
      onPass        (how) => void, called once, inside the pass, how is "match" or "skip"
      onAttempt     (row) => void, called once as the screen closes, with the
@@ -34,14 +35,23 @@
   const MATCH_SCALES = [0.85, 0.925, 1, 1.075, 1.15];
   const WORK_PX = 320;              // longest side of the working frame
   const WORK_PX_SLOW = 240;         // and where it drops to if a phone cannot keep up
-  const SLOW_MS = 10;
+  // An evaluation over this, as the median of eight, drops the phone to the
+  // smaller frame. It was 10 ms when a stencil held half as many lines; with
+  // the keep at 0.12 and the alpha a weight, every phone on the first
+  // outdoor walk took 14 to 19 ms and ran the whole hunt at 240 px, which
+  // the audit puts at 0.02 to 0.03 off every score. At 250 ms a tick, 40 ms
+  // is still under a fifth of the time busy.
+  const SLOW_MS = 40;
   // The pass rule (section 7 of the handoff): a score held at a line for long
   // enough, on consecutive evaluations. Three lines, each with its own timer.
   // Each line is 0.05 under the handoff's, after the first hunt was walked.
+  // These are the standard lines; a hunt file may give a stencil its own
+  // three, lower, where the build measured it as hard (see linesOf).
   const PASS_LINES = [[0.30, 600], [0.25, 1000], [0.20, 2000]];
   const BAR_FULL = 0.30;            // the score at which the bar is all the way across
   const COMPLETE_MS = 1500;         // how long Complete! stays before the screen closes itself
   const TRACE_MAX = 480;            // one smoothed score a second, the last eight minutes of an opening
+  const HINT_NUDGE_MS = 30000;      // this long under the lowest line with a hint untaken, and it is offered
 
   let root = null;        // the full-screen container, built once and reused
   let stream = null;      // the live camera tracks, so they can all be stopped
@@ -51,6 +61,7 @@
   let place = null;       // the stencil's drawn rectangle, in CSS px
   let fixWatch = null;    // a watchPosition, only while a located stencil is open
   let completeTimer = null;
+  let nudgeTimer = null;  // the hint offer, armed at open
   let generation = 0;     // which opening of the screen a camera request belongs to
 
   function el(tag, cls, text) {
@@ -103,6 +114,17 @@
                 cursor: pointer; }
     #lensmsg { position: absolute; left: 18px; right: 18px; top: 44%; text-align: center;
                font-size: 1rem; line-height: 1.5; text-shadow: 0 1px 4px rgba(0,0,0,.9); }
+    /* Two nudges. The turn: a pill under the bar when the phone is held the
+       wrong way round for the stencil. The hint offer: a word under the ?
+       button, a tap on it takes the hint, after half a minute below the line. */
+    #lensturn { position: absolute; left: 50%; transform: translateX(-50%);
+                top: calc(62px + env(safe-area-inset-top, 0px)); z-index: 4;
+                padding: 8px 14px; border-radius: 999px; background: rgba(0,0,0,.6);
+                font-size: .9rem; white-space: nowrap; pointer-events: none; }
+    #lensnudge { position: absolute; right: 12px; top: calc(66px + env(safe-area-inset-top, 0px));
+                 z-index: 4; border: none;
+                 padding: 8px 12px; border-radius: 999px; background: rgba(0,0,0,.6);
+                 color: #fff; font: inherit; font-size: .9rem; cursor: pointer; min-height: 40px; }
     /* The clue and the distance line, one translucent strip across the bottom. */
     #lensfoot { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3;
                 padding: 12px 16px calc(14px + env(safe-area-inset-bottom, 0px));
@@ -132,6 +154,8 @@
       <div id="matchbar"><div id="matchfill"></div></div>
       <button id="lensback" aria-label="Back">←</button>
       <button id="lenshintbtn" aria-label="Hint" hidden>?</button>
+      <button id="lensnudge" hidden>Try the hint?</button>
+      <div id="lensturn" hidden></div>
       <div id="lensmsg" hidden></div>
       <div id="lensfoot" hidden><div id="lensclue" hidden></div><div id="lensdist" hidden></div></div>
       <button id="lenswash" data-strong hidden>Complete!</button>`;
@@ -141,7 +165,11 @@
     q("#lensback").onclick = () => { close(); if (cfg && cfg.opts.onClose) cfg.opts.onClose(); };
     q("#lenswash").onclick = finish;
     q("#lenshintbtn").onclick = () => showHint(true);
+    q("#lensnudge").onclick = () => showHint(true);
     q("#lensfeed").addEventListener("loadedmetadata", layout);
+    // A rotation is two events, the window's and then the camera's, in
+    // either order; the second is what makes the rectangle right.
+    q("#lensfeed").addEventListener("resize", layout);
     q("#lensstencil").addEventListener("load", layout);
     window.addEventListener("resize", () => { if (isOpen()) layout(); });
     window.addEventListener("orientationchange", () => { if (isOpen()) layout(); });
@@ -171,7 +199,16 @@
     q("#lensdist").hidden = !stencil.location;
     q("#lensfoot").hidden = !(stencil.clue || stencil.location);
     q("#lensmsg").hidden = true;
+    q("#lensnudge").hidden = true;
+    q("#lensturn").hidden = true;
     q("#lenswash").hidden = true;
+    // The hint is offered once the player has spent half a minute not at
+    // the lowest line, to a player who has not taken it. Nobody took it on
+    // the first two walks, and nobody knew it was there. Checked once a
+    // second rather than at one instant, and the offer follows the score:
+    // up while it is under the line, away when it climbs back.
+    clearInterval(nudgeTimer);
+    nudgeTimer = setInterval(offerHint, 1000);
     // Skip exists only in test mode. Not hidden: absent.
     const old = q("#lensskip");
     if (old) old.remove();
@@ -239,6 +276,8 @@
     stopWatch();
     clearTimeout(completeTimer);
     completeTimer = null;
+    clearInterval(nudgeTimer);
+    nudgeTimer = null;
     generation += 1;
     stopStream();
     if (root) {
@@ -282,8 +321,18 @@
         node.style.width = place.w + "px";
         node.style.height = place.h + "px";
       }
+      // A phone held the wrong way round for the stencil letterboxes it to a
+      // fraction of the frame and scores it there. One player spent two
+      // minutes on a stencil like that. The camera's rectangle says which
+      // way the phone is held; the stencil says which way it was taken.
+      const sideways = rect.w > rect.h, wide = img.naturalWidth > img.naturalHeight;
+      const square = img.naturalWidth === img.naturalHeight;
+      const turn = q("#lensturn");
+      turn.textContent = wide ? "Turn the phone sideways" : "Turn the phone upright";
+      turn.hidden = square || sideways === wide;
     } else {
       place = null;
+      q("#lensturn").hidden = true;
     }
     if (match) match.maskKey = "";       // the placement moved: masks are rebuilt on the next tick
   }
@@ -321,7 +370,32 @@
     if (!cfg || !cfg.stencil.hint) return;
     q("#lenshint").hidden = false;
     q("#lenshintbtn").hidden = true;
+    q("#lensnudge").hidden = true;
     if (charge && cfg.opts.onHint) cfg.opts.onHint();
+  }
+  // Half a minute spent not at the lowest line, the hint untaken: a word
+  // under the button. Not while it is going well, not when there is no
+  // hint to take, and gone again if the score climbs back to the line. The
+  // time at the line is what record() counts as aboveMs; the rest of the
+  // opening, evaluated or not, is time not at it.
+  function offerHint() {
+    if (!isOpen() || !cfg || !cfg.stencil.hint || q("#lenshintbtn").hidden || !match) return;
+    const lowest = match.lines[match.lines.length - 1][0];
+    const doingWell = match.smooth != null && match.smooth >= lowest;
+    const below = (performance.now() - match.t0) - match.aboveMs;
+    q("#lensnudge").hidden = doingWell || below < HINT_NUDGE_MS;
+  }
+
+  // The stencil's own pass lines, or the standard three. The build gives a
+  // stencil it measured as hard three lower lines, in the hunt file: three
+  // numbers, descending, each with the standard hold beside it here.
+  function linesOf(stencil) {
+    const l = stencil && stencil.lines;
+    if (Array.isArray(l) && l.length === PASS_LINES.length
+        && l.every((v, i) => Number.isFinite(v) && v > 0 && v <= 1 && (i === 0 || v < l[i - 1]))) {
+      return l.map((v, i) => [v, PASS_LINES[i][1]]);
+    }
+    return PASS_LINES;
   }
 
   /* ---- the opening's record ----
@@ -338,14 +412,14 @@
     if (match.smooth > match.peakSmooth) match.peakSmooth = match.smooth;
     match.w = w; match.h = h;
     if (match.pass.passed && match.line == null) {
-      const i = PASS_LINES.findIndex(([, hold], j) => match.pass.since[j] != null && now - match.pass.since[j] >= hold);
-      match.line = i < 0 ? null : PASS_LINES[i][0];
+      const i = match.lines.findIndex(([, hold], j) => match.pass.since[j] != null && now - match.pass.since[j] >= hold);
+      match.line = i < 0 ? null : match.lines[i][0];
     }
     // Time at or above the lowest line, counted as evaluated time only: a
     // tick that arrives after a gap — the page hidden, the phone asleep —
     // credits at most two ticks' worth, never the gap, which is how the pass
     // rule sees it too (its timers start at that same returning tick).
-    const lowest = PASS_LINES[PASS_LINES.length - 1][0];
+    const lowest = match.lines[match.lines.length - 1][0];
     if (match.lastAt != null && match.smooth >= lowest) {
       match.aboveMs += Math.min(now - match.lastAt, 2 * MATCH_EVERY_MS);
     }
@@ -391,13 +465,14 @@
   // time now; back come the timers and whether it passed. A line's timer
   // starts at the evaluation where the score first reaches it and is cleared
   // the moment the score drops below it; the first to expire passes.
-  function passRule(state, score, now) {
+  function passRule(state, score, now, lines) {
+    const L = lines || PASS_LINES;
     const prev = state && state.since ? state.since : [];
-    const since = PASS_LINES.map(([line], i) => {
+    const since = L.map(([line], i) => {
       if (score < line) return null;
       return prev[i] == null ? now : prev[i];
     });
-    const passed = PASS_LINES.some(([, hold], i) => since[i] != null && now - since[i] >= hold);
+    const passed = L.some(([, hold], i) => since[i] != null && now - since[i] >= hold);
     return { since, passed };
   }
 
@@ -436,6 +511,7 @@
     match = {
       smooth: null, on: 0, off: 0, best: 0, ms: null,
       pass: { since: [], passed: false }, line: null,
+      lines: linesOf(cfg && cfg.stencil),
       workPx: WORK_PX, slow: [],
       frame: document.createElement("canvas"), stencil: document.createElement("canvas"),
       masks: null, maskKey: "", native: new Map(), rebuilt: false,
@@ -491,7 +567,7 @@
                  : MATCH_ALPHA * best.score + (1 - MATCH_ALPHA) * match.smooth;
 
     const now = performance.now();
-    match.pass = passRule(match.pass, match.smooth, now);
+    match.pass = passRule(match.pass, match.smooth, now, match.lines);
     record(best, now, w, h);
 
     // Keep each evaluation cheap. A phone that cannot manage it at 320 px
@@ -531,7 +607,9 @@
   // the frame's 99th percentile is one. That last step is what stops the score
   // swinging with the light: a dim wall and a bright one give the same map.
   function edgeMap(src, w, h) {
-    const c = match.frame;
+    return edgeMapOn(match.frame, src, w, h);
+  }
+  function edgeMapOn(c, src, w, h) {
     if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
     const ctx = c.getContext("2d", { willReadFrequently: true });
     // The whole frame, no crop: the working frame is the rendered rectangle,
@@ -803,7 +881,8 @@
   function paintBar() {
     if (!root) return;
     const s = match && match.smooth != null ? match.smooth : 0;
-    q("#matchfill").style.width = (Math.min(1, s / BAR_FULL) * 100) + "%";
+    const full = match ? match.lines[0][0] : BAR_FULL;
+    q("#matchfill").style.width = (Math.min(1, s / full) * 100) + "%";
   }
 
   // For the tests: paint the bar as if the smoothed score were v, and stop
@@ -825,8 +904,82 @@
                      workPx: match.workPx, score: match.smooth, best: match.best,
                      on: match.on, off: match.off, since: match.pass.since,
                      evals: match.evals, peak: match.peak, traceLen: match.trace.length,
+                     lines: match.lines.map((l) => l[0]),
                      rect, place, hinted: !q("#lenshint").hidden }
                  : { rect, place, score: null };
+  }
+
+  /* ---- a photograph judged before it is cut ----
+     The capture page's verdict after the shutter: the same test the stencil
+     will face, run on the photograph against itself. Its strongest twelve
+     per cent of edges are the stencil, specks dropped, thickened and
+     weighted as the scorer would have them; the ring is the six pixels
+     beside; the score is taken at the true alignment. pipeline/audit.py's
+     assess() is the same arithmetic in Python, and the build prints it
+     beside each photograph, so the two can be held to each other. It
+     predicts the attainable score; it is not that score. */
+  const ASSESS_KEEP = 0.12;
+  const ASSESS_SPECK = 12;
+  function assess(src) {
+    const sw = src.naturalWidth || src.videoWidth || src.width;
+    const sh = src.naturalHeight || src.videoHeight || src.height;
+    if (!(sw > 0 && sh > 0)) return null;
+    const k = WORK_PX / Math.max(sw, sh);
+    const w = Math.max(8, Math.round(sw * k)), h = Math.max(8, Math.round(sh * k));
+    const c = document.createElement("canvas");
+    const E = edgeMapOn(c, src, w, h);
+    const n = w * h;
+    // The strongest share of the interior, strictly above the quantile.
+    const inner = [];
+    for (let y = 2; y < h - 2; y++) for (let x = 2; x < w - 2; x++) inner.push(E[y * w + x]);
+    const mask0 = new Uint8Array(n);
+    if (inner.length) {
+      const sorted = Float32Array.from(inner).sort();
+      const t = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * (1 - ASSESS_KEEP)))];
+      for (let y = 2; y < h - 2; y++) for (let x = 2; x < w - 2; x++) {
+        const i = y * w + x;
+        if (E[i] > t) mask0[i] = 1;
+      }
+    }
+    // Specks out: the 8-connected pieces under the limit.
+    const mask1 = new Uint8Array(n);
+    const seen = new Uint8Array(n);
+    let inked = 0;
+    const stack = [];
+    for (let s0 = 0; s0 < n; s0++) {
+      if (!mask0[s0] || seen[s0]) continue;
+      const piece = [];
+      stack.push(s0); seen[s0] = 1;
+      while (stack.length) {
+        const i = stack.pop();
+        piece.push(i);
+        const x = i % w, y = (i - x) / w;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx, yy = y + dy;
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+          const j = yy * w + xx;
+          if (mask0[j] && !seen[j]) { seen[j] = 1; stack.push(j); }
+        }
+      }
+      if (piece.length >= ASSESS_SPECK) { for (const i of piece) mask1[i] = 1; inked += piece.length; }
+    }
+    const strength0 = new Uint8Array(n);
+    for (let i = 0; i < n; i++) if (mask1[i]) strength0[i] = Math.round(255 * Math.min(1, E[i]));
+    const shape = dilate(mask1, w, h, 2);
+    const strength = dilateMax(strength0, w, h, 2);
+    const grown = dilate(shape, w, h, 6);
+    let won = 0, wsum = 0, ringSum = 0, ringN = 0;
+    for (let i = 0; i < n; i++) {
+      if (shape[i]) { const wt = strength[i] / 255; won += wt * E[i]; wsum += wt; }
+      else if (grown[i]) { ringSum += E[i]; ringN++; }
+    }
+    const on = wsum ? won / wsum : 0, off = ringN ? ringSum / ringN : 0;
+    const score = Math.max(0, (on - off) / (on + off + 0.001));
+    const interior = Math.max(1, (w - 4) * (h - 4));
+    const inkedFrac = inked / interior;
+    const r3 = (v) => Math.round(v * 1000) / 1000;
+    return { score: r3(score), on: r3(on), off: r3(off), inked: Math.round(inkedFrac * 10000) / 10000,
+             sparse: inkedFrac < 0.53 * ASSESS_KEEP, frame: w + "x" + h };
   }
 
   // For the tests: the masks this layout builds, the scorer's own arrays.
@@ -880,5 +1033,5 @@
     return { weighted, flat, minW: lo, maxW: hi, n, weights, w, h };
   }
 
-  window.Lens = { open, close, stats, passRule, fakeScore, isOpen, bothWays, maskSets };
+  window.Lens = { open, close, stats, passRule, fakeScore, isOpen, bothWays, maskSets, assess, linesOf };
 })();

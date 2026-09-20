@@ -48,7 +48,7 @@ LEAFLET_FILES = ("leaflet.js", "leaflet.css")
 SLUG = re.compile(r"[a-z0-9-]+")
 
 HUNT_KEYS = ("id", "name", "test_mode", "map", "stencils")
-STENCIL_KEYS = ("id", "src", "clue", "location", "hint")
+STENCIL_KEYS = ("id", "src", "clue", "location", "hint", "lines")
 MAP_KEYS = ("bounds", "image")
 LOCATION_KEYS = ("lat", "lon")
 SUPABASE_KEYS = ("url", "anon_key")
@@ -230,6 +230,17 @@ def check_stencil(s, n, seen, images):
             fail(where, f"clue is {len(clue)} characters, at most {CLUE_MAX}")
     if "location" in s:
         check_location(s["location"], where)
+    # The stencil's own pass lines, from the build's audit: three numbers,
+    # descending, each a score between nought and one. lens.js falls back to
+    # the standard three for anything else, so a bad set is refused here
+    # rather than silently played on the standard lines.
+    if "lines" in s:
+        lines = s["lines"]
+        ok = (isinstance(lines, list) and len(lines) == 3
+              and all(is_num(v) and 0 < v <= 1 for v in lines)
+              and lines[0] > lines[1] > lines[2])
+        if not ok:
+            fail(where, f"lines is {lines!r}, must be three scores between 0 and 1, descending")
 
 
 def check_bounds(bounds, stencils):
@@ -451,14 +462,16 @@ def build(content_path, out_dir, supabase=None):
 
 
 def build_capture(out_dir, supabase=None):
-    """The page the owner takes the photographs with. Just the one file: it
-    carries its own camera code, so nothing else is copied beside it."""
+    """The page the owner takes the photographs with, and lens.js beside it:
+    the page judges each photograph after the shutter with the scorer's own
+    arithmetic, so the scorer goes with it."""
     template = (APP / "capture.html").read_text(encoding="utf-8")
     require_marker(template, SUPABASE_MARKER, "app/capture.html")
     page = template.replace(SUPABASE_MARKER,
                             f"<script>window.SUPABASE = {script_json(supabase)};</script>", 1)
     out = output_dir(out_dir)
     (out / "index.html").write_text(page, encoding="utf-8")
+    shutil.copy2(APP / "lens.js", out / "lens.js")
     print(f"built {out / 'index.html'} from app/capture.html, "
           f"upload {'on' if supabase else 'off, the shutter downloads instead'}")
 

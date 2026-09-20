@@ -21,6 +21,7 @@ module.exports = async () => {
   py([build, "content/fixture.json", path.join(SITE, "fixture"), "--supabase", STUB]);
   py([build, "tests/content/fixture-image.json", path.join(SITE, "fixture-image"), "--supabase", STUB]);
   py([build, "tests/content/fixture-plain.json", path.join(SITE, "fixture-plain"), "--supabase", STUB]);
+  py([build, "tests/content/fixture-lines.json", path.join(SITE, "fixture-lines"), "--supabase", STUB]);
   py([build, "content/fixture.json", path.join(SITE, "fixture-nosb"), "--no-supabase"]);
   py([build, "--capture", path.join(SITE, "capture"), "--supabase", STUB]);
   py([build, "--capture", path.join(SITE, "capture-nosb"), "--no-supabase"]);

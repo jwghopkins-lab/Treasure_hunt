@@ -370,3 +370,78 @@ class AuditTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RuleTest(unittest.TestCase):
+    """The pass lines a stencil is given, the verdict on each, and the
+    photograph judged on its own."""
+
+    def test_lines_come_down_for_a_hard_stencil_and_never_below_three_quarters(self):
+        self.assertIsNone(audit.lines_for(0.6, 0.1))
+        self.assertIsNone(audit.lines_for(0.45, 0.1))
+        self.assertEqual(audit.lines_for(0.40, 0.05), [0.267, 0.222, 0.178])
+        self.assertEqual(audit.lines_for(0.30, 0.05), [0.225, 0.188, 0.15])
+        self.assertEqual(audit.lines_for(0.10, 0.05), [0.225, 0.188, 0.15])
+
+    def test_the_lowest_line_keeps_clear_of_the_confusion(self):
+        # The lowest line has to stay a margin above the worst wrong-place
+        # score, so the lines come down less, or not at all.
+        self.assertEqual(audit.lines_for(0.30, 0.15), [0.27, 0.225, 0.18])
+        self.assertIsNone(audit.lines_for(0.30, 0.19))
+
+    def row(self, sid, att, conf, off=0.05, slow=None):
+        return {"id": sid, "attainable": att, "attainable_slow": att if slow is None else slow,
+                "confusion": conf, "confusion_slow": conf, "confused_with": "other",
+                "on": 0.35, "off": off}
+
+    def test_verdicts_drop_the_weak_and_the_confusable_and_line_the_hard(self):
+        rows = [self.row("strong", 0.6, 0.10), self.row("busy", 0.30, 0.05, off=0.25),
+                self.row("hard", 0.40, 0.10, slow=0.38), self.row("twin", 0.50, 0.22),
+                self.row("slowweak", 0.40, 0.05, slow=0.30)]
+        said = {v["id"]: v for v in audit.verdicts(rows, 0.35)}
+        self.assertTrue(said["strong"]["keep"]); self.assertIsNone(said["strong"]["lines"])
+        self.assertFalse(said["busy"]["keep"])
+        self.assertIn("under the 0.35 floor", said["busy"]["why"])
+        self.assertIn("busy beside its lines", said["busy"]["why"])
+        self.assertTrue(said["hard"]["keep"])
+        self.assertEqual(said["hard"]["lines"], audit.lines_for(0.38, 0.10))
+        self.assertFalse(said["twin"]["keep"])
+        self.assertIn("in front of other", said["twin"]["why"])
+        # The worse frame decides: a stencil that only fails on a slow phone fails.
+        self.assertFalse(said["slowweak"]["keep"])
+        # With the floor off, everything stays, and the weak one gets lines.
+        off = {v["id"]: v for v in audit.verdicts(rows, 0)}
+        self.assertTrue(all(v["keep"] for v in off.values()))
+        self.assertEqual(off["busy"]["lines"], [0.225, 0.188, 0.15])
+
+    def test_why_weak_names_the_ring_first_then_the_frame_then_the_edges(self):
+        self.assertIn("busy beside its lines", audit.why_weak(self.row("a", 0.2, 0.1, off=0.21), None))
+        self.assertIn("too little in the frame",
+                      audit.why_weak(self.row("a", 0.2, 0.1), {"sparse": True, "inked": 0.02}))
+        self.assertIn("faint edges", audit.why_weak(self.row("a", 0.2, 0.1), {"sparse": False}))
+
+    def test_assess_scores_a_clean_subject_high_a_blank_frame_nought_and_noise_as_busy(self):
+        clean = Image.new("RGB", (300, 400), (200, 196, 188))
+        d = ImageDraw.Draw(clean)
+        d.rectangle([40, 50, 250, 350], outline=(20, 20, 20), width=6)
+        d.rectangle([80, 90, 210, 200], outline=(20, 20, 20), width=5)
+        a = audit.assess(clean)
+        self.assertGreater(a["score"], 0.6, a)
+        self.assertLess(a["off"], 0.1, a)
+        self.assertEqual(a["frame"], "240x320")
+        blank = Image.new("RGB", (300, 400), (150, 150, 150))
+        b = audit.assess(blank)
+        self.assertEqual(b["score"], 0.0, b)
+        self.assertTrue(b["sparse"], b)
+        import random
+        rnd = random.Random(3)
+        noisy = Image.new("RGB", (300, 400))
+        noisy.putdata([(v, v, v) for v in (rnd.randint(60, 230) for _ in range(300 * 400))])
+        ImageDraw.Draw(noisy).rectangle([40, 50, 250, 350], outline=(10, 10, 10), width=6)
+        c = audit.assess(noisy)
+        # Noise beside the lines is read as a busier ring and a lower score
+        # than the same lines on a plain ground; how much busier depends on
+        # the noise, so it is held against the clean frame, not a line.
+        self.assertGreater(c["off"], 3 * a["off"], (a, c))
+        self.assertLess(c["score"], a["score"] - 0.2, (a, c))
+

@@ -52,6 +52,7 @@ from urllib.request import url2pathname
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import build      # noqa: E402  the validation the site build does, run on what this writes
+import audit    # noqa: E402  the measurement that decides what is published
 import stencil    # noqa: E402  the recipe, not repeated here
 
 BASE = Path(__file__).resolve().parent.parent
@@ -304,7 +305,13 @@ def main(argv=None):
                     help="drop blobs with fewer pixels than this (chosen per photo if left out)")
     ap.add_argument("--long", type=int, default=800,
                     help="resize so the long side is this many px (default 800)")
+    ap.add_argument("--floor", type=float, default=audit.FLOOR,
+                    help=f"leave out a stencil that cannot attain this against its own "
+                         f"photograph, or that passes in the wrong place (default {audit.FLOOR}); "
+                         "0 keeps every one")
     args = ap.parse_args(argv)
+    if args.floor < 0:
+        ap.error("--floor must not be negative")
     # The recipe's own guards, because this is the other door to it and a
     # --keep of 6 for 0.6 would otherwise index off the end of a quantile.
     if not 0 < args.keep <= 1:
@@ -348,15 +355,78 @@ def main(argv=None):
             s["hint"] = entry["hint"]
         stencils.append(s)
 
+    # Every photograph is cut, then measured, and only then is the hunt
+    # written: the ones that cannot score, or that score in the wrong place,
+    # are left out with a reason, and the ones that stay get their own pass
+    # lines where the measurement says they need them. The measurement is of
+    # all of them together, dropped ones included, because a player can
+    # still stand in front of a scene the hunt does not use.
     hunt = {"id": slug, "name": args.name, "test_mode": False}
     if located:
         hunt["map"] = {"bounds": map_bounds(located)}
     hunt["stencils"] = stencils
     write(content, hunt)
+    rows = audit.measure(content, photos)[1]
+    assessed = {s["id"]: audit.assess(audit.upright(photos / f"{s['id']}.jpg")) for s in stencils}
+    said = audit.verdicts(rows, args.floor, assessed)
+    by_id = {r["id"]: r for r in rows}
+    kept = []
+    for s, v in zip(stencils, said):
+        if v["keep"]:
+            if v["lines"]:
+                s["lines"] = v["lines"]
+            kept.append(s)
+        else:
+            # Its stencil, hint and preview go too: nothing the hunt does not
+            # name should be committed beside it.
+            for suffix in ("-stencil.png", "-stencil-hint.png", "-stencil-preview.jpg"):
+                gone = out / f"{s['id']}{suffix}"
+                if gone.exists():
+                    gone.unlink()
+    if not kept:
+        # Nothing survives: no hunt file either, since a hunt with no stencils
+        # is not one the build would take, and the provisional one above
+        # names stencils whose files have just gone. On the runner that is
+        # a failed step and nothing is pushed; run by hand over a slug that
+        # is already published, it leaves that hunt's files gone from the
+        # working tree, and git checkout brings them back.
+        content.unlink()
+        print(f"not published, {len(stencils)}:", file=sys.stderr)
+        for s, v in zip(stencils, said):
+            print(f"  {s['id']}: {v['why']}", file=sys.stderr)
+        print(f"{slug}: nothing to publish", file=sys.stderr)
+        return 3
+    located = [s["location"] for s in kept if "location" in s]
+    hunt = {"id": slug, "name": args.name, "test_mode": False}
+    if located:
+        hunt["map"] = {"bounds": map_bounds(located)}
+    hunt["stencils"] = kept
+    write(content, hunt)
 
+    # The report: what was published and on what lines, what was not and
+    # why, as far as the numbers say. `judged` is the capture page's own
+    # verdict on the photograph, printed so the two can be compared.
+    def numbers(sid):
+        r, a = by_id[sid], assessed[sid]
+        partner = audit.worst_partner(r)
+        wrong = (f"wrong-place {max(r['confusion'], r['confusion_slow']):.3f} on {partner}"
+                 if partner else "nothing else to confuse with")
+        return (f"attainable {min(r['attainable'], r['attainable_slow']):.3f}, {wrong}, "
+                f"judged {a['score']:.3f}")
+    print(f"published {len(kept)} of {len(stencils)}:", file=sys.stderr)
+    for s in kept:
+        lines = s.get("lines")
+        print(f"  {s['id']}: {numbers(s['id'])}, lines "
+              + ("/".join(f"{v:.3f}" for v in lines) if lines else "standard"), file=sys.stderr)
+    dropped = [(s, v) for s, v in zip(stencils, said) if not v["keep"]]
+    if dropped:
+        print(f"not published, {len(dropped)}:", file=sys.stderr)
+        for s, v in dropped:
+            print(f"  {s['id']}: {v['why']}", file=sys.stderr)
     print(f"wrote {content}", file=sys.stderr)
-    print(f"{slug}: {len(stencils)} stencils, {len(located)} located, "
-          f"{clues} with a clue — {', '.join(s['id'] for s in stencils)}", file=sys.stderr)
+    print(f"{slug}: {len(kept)} stencils, {len(located)} located, "
+          f"{sum(1 for s in kept if 'clue' in s)} with a clue — "
+          f"{', '.join(s['id'] for s in kept)}", file=sys.stderr)
     return 0
 
 

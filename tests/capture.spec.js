@@ -1,6 +1,10 @@
 // The capture page, with the fake camera and a stubbed Supabase.
 const { test, expect } = require("@playwright/test");
-const { prepare } = require("./helpers");
+const { prepare, ROOT, browserWithFeed, mobileContext, INIT } = require("./helpers");
+const { execFileSync } = require("child_process");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 
 // The size a JPEG says it is, from its start-of-frame marker.
 function jpegSize(buf) {
@@ -63,7 +67,7 @@ test.describe("the capture page", () => {
     const path = uploads[0].url.replace("https://stub.supabase.co/storage/v1/object/captures/", "");
     expect(rows[0].headers["content-type"]).toBe("application/json");
     expect(rows[0].headers.prefer).toBe("return=minimal");
-    expect(rows[0].body).toEqual({ hunt: "trafalgar", path, clue: "Between the fountains, looking north.",
+    expect(rows[0].body).toEqual({ judged: expect.any(Number), hunt: "trafalgar", path, clue: "Between the fountains, looking north.",
                                    lat: 51.50787, lon: -0.12812, accuracy: 9 });
     await expect(page.locator("#count")).toHaveText("1");
     await expect(clue).toHaveValue("");
@@ -129,4 +133,74 @@ test.describe("the capture page", () => {
     const fit = await page.locator("video").evaluate((v) => getComputedStyle(v).objectFit);
     expect(fit).toBe("contain");
   });
+
+  test("a frame with nothing in it is refused with advice, and nothing goes up", async () => {
+    test.setTimeout(60000);
+    // A blank grey feed: no edges, so the verdict is that there is too
+    // little in the frame. The count stays at nought and no request leaves.
+    const browser = await browserWithFeed("grey.y4m");
+    const context = await mobileContext(browser);
+    const page = await context.newPage();
+    await page.addInitScript(INIT);
+    const requests = [];
+    await page.route("https://stub.supabase.co/**", (route) => {
+      requests.push(route.request().url());
+      return route.fulfill({ status: 201, body: "" });
+    });
+    try {
+      await page.goto("capture/");
+      await page.locator("input[placeholder='hunt']").fill("Nowhere");
+      await page.waitForFunction(() => { const v = document.querySelector("video"); return v && v.videoWidth > 0; });
+      await page.locator("#shutter").click();
+      await expect(page.locator("#flash")).toContainText("Not this one");
+      await expect(page.locator("#flash")).toContainText("too little in the frame");
+      await expect(page.locator("#count")).toHaveText("0");
+      await page.waitForTimeout(500);
+      expect(requests).toEqual([]);
+      await expect(page.locator("#shutter")).toBeEnabled();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test("a good photograph goes up with its verdict in the row, and the verdict is the audit's", async () => {
+    test.setTimeout(120000);
+    // The fixture door in the fake camera scores high; the row carries the
+    // page's number, and that number is what pipeline/audit.py's assess()
+    // says of the same photograph, to within what the resize costs.
+    const out = path.join(os.tmpdir(), "assess-door.json");
+    execFileSync("python3", ["-c", `
+import sys, json
+sys.path.insert(0, "pipeline")
+import audit
+print(json.dumps(audit.assess(audit.upright("photos/fixture/door.jpg"))))`], { cwd: ROOT, stdio: ["ignore", fs.openSync(out, "w"), "inherit"] });
+    const expected = JSON.parse(fs.readFileSync(out, "utf8"));
+    const browser = await browserWithFeed("fixture-door.y4m");
+    const context = await mobileContext(browser);
+    const page = await context.newPage();
+    await page.addInitScript(INIT);
+    const rows = [];
+    await page.route("https://stub.supabase.co/**", (route) => {
+      const r = route.request();
+      if (r.url().includes("/rest/v1/captures")) { rows.push(r.postDataJSON()); return route.fulfill({ status: 201, body: "" }); }
+      return route.fulfill({ status: 200, contentType: "application/json", body: '{"Key":"ok"}' });
+    });
+    try {
+      await page.goto("capture/");
+      await page.locator("input[placeholder='hunt']").fill("Somewhere");
+      await page.waitForFunction(() => { const v = document.querySelector("video"); return v && v.videoWidth > 0; });
+      await page.locator("#shutter").click();
+      await expect.poll(() => rows.length).toBe(1);
+      await expect(page.locator("#count")).toHaveText("1");
+      expect(rows[0].judged).toBeGreaterThan(0.46);
+      expect(Math.abs(rows[0].judged - expected.score)).toBeLessThanOrEqual(0.03);
+      // The page's own reading of the photograph, off the same arithmetic.
+      const judged = await page.evaluate(() => window.Lens.assess(document.querySelector("video")));
+      expect(judged.frame).toBe("240x320");
+      expect(judged.sparse).toBe(false);
+    } finally {
+      await browser.close();
+    }
+  });
 });
+

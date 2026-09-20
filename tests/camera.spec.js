@@ -163,14 +163,42 @@ test.describe("the camera screen", () => {
     expect(back.y).toBeLessThan(80);
     const visibleButtons = await lens.locator("button:visible").evaluateAll((els) => els.map((e) => e.id));
     expect(visibleButtons.sort()).toEqual(withClue.hint ? ["lensback", "lenshintbtn", "lensskip"] : ["lensback", "lensskip"]);
-    // No words but the clue, Skip and the hint's glyph.
+    // The fake camera is landscape and the stencil portrait, so the turn
+    // nudge is up: the one case where a phone is held the wrong way round.
+    await expect(lens.locator("#lensturn")).toBeVisible();
+    await expect(lens.locator("#lensturn")).toHaveText("Turn the phone upright");
+    await expect(lens.locator("#lensnudge")).toBeHidden();
+    // No words but the clue, Skip, the hint's glyph and the turn nudge.
     // (The mocked position is far away, so the distance line may be there too.)
     const words = await lens.evaluate((el) => el.innerText.replace(/\s+/g, " ").trim());
-    const rest = words.replace("←", "").replace("Skip", "").replace("?", "").trim();
+    const rest = words.replace("←", "").replace("Skip", "").replace("?", "")
+      .replace("Turn the phone upright", "").trim();
     expect(rest.startsWith(withClue.clue)).toBe(true);
     expect(rest.slice(withClue.clue.length).trim()).toMatch(/^(About [\d.]+ (m|km) · (N|NE|E|SE|S|SW|W|NW))?$/);
     await expect(lens.locator("#lenswash")).toBeHidden();
     await expect(lens.locator("input[type=range]")).toHaveCount(0);
+  });
+
+  test("the turn nudge follows the stencil: gone for a landscape stencil in a landscape feed, back for a portrait one", async ({ page }) => {
+    await page.goto("fixture/");
+    await openStill(page, bare.id);
+    await expect(page.locator("#lensturn")).toHaveText("Turn the phone upright");
+    // A landscape stencil, drawn here, in the fake camera's landscape feed.
+    await wear(page, await page.evaluate(() => {
+      const c = document.createElement("canvas");
+      c.width = 800; c.height = 600;
+      const ctx = c.getContext("2d");
+      ctx.strokeStyle = "rgba(255,61,0,1)"; ctx.lineWidth = 6;
+      ctx.strokeRect(80, 60, 640, 480);
+      return c.toDataURL();
+    }));
+    await expect(page.locator("#lensturn")).toBeHidden();
+    // And a portrait one again.
+    await wearStencil(page, path.join(ROOT, "app", bare.src));
+    await expect(page.locator("#lensturn")).toBeVisible();
+    await expect(page.locator("#lensturn")).toHaveText("Turn the phone upright");
+    // The nudge is words, not a control: no button, no tap.
+    expect(await page.locator("#lensturn").evaluate((el) => el.tagName)).toBe("DIV");
   });
 
   test("the stencil sits centred in the video's rectangle at the stencil's own aspect", async ({ page }) => {
@@ -199,7 +227,8 @@ test.describe("the camera screen", () => {
     await expect(page.locator("#lensclue")).toBeHidden();
     await expect(page.locator("#lensdist")).toBeHidden();
     const words = await page.locator("#lens").evaluate((el) => el.innerText.replace(/\s+/g, " ").trim());
-    expect(words.replace("←", "").replace("Skip", "").replace("?", "").trim()).toBe("");
+    expect(words.replace("←", "").replace("Skip", "").replace("?", "")
+      .replace("Turn the phone upright", "").trim()).toBe("");
   });
 
   test("pointer drags and pinches do not move the stencil", async ({ page }) => {

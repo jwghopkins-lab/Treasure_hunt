@@ -266,6 +266,16 @@ class Validation(Sandbox):
         h["stencils"][1]["clue"] = "x" * 200
         quiet(build.validate, h, "sample")
 
+    def test_lines_if_present_are_three_descending_scores(self):
+        for bad in ([0.3, 0.25], [0.2, 0.25, 0.3], [1.2, 0.5, 0.2], [0.3, 0.25, 0], "0.3",
+                    [0.3, 0.3, 0.2], [0.3, None, 0.2]):
+            h = hunt()
+            h["stencils"][1]["lines"] = bad
+            self.assertFails(h, "stencil 's2': lines is", "three scores between 0 and 1, descending")
+        h = hunt()
+        h["stencils"][1]["lines"] = [0.225, 0.188, 0.15]
+        quiet(build.validate, h, "sample")
+
     def test_location_if_present_is_on_the_earth(self):
         h = hunt()
         h["stencils"][0]["location"] = [51.5, -0.1]
@@ -501,7 +511,7 @@ class Capture(Sandbox):
         page = (out / "index.html").read_text()
         self.assertIn('<script>window.SUPABASE = {"url": "https://example.supabase.co", "anon_key": "anon-key-123"};</script>', page)
         self.assertNotIn("SUPABASE GOES HERE", page)
-        self.assertEqual([p.name for p in out.iterdir()], ["index.html"])
+        self.assertEqual(sorted(p.name for p in out.iterdir()), ["index.html", "lens.js"])
 
     def test_capture_page_bakes_null_without_config(self):
         out = self.site / "capture"

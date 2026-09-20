@@ -64,4 +64,47 @@ test.describe("the pass rule", () => {
     expect(out.same).toBe(true);
     expect(out.next).toEqual({ since: [null, null, null], passed: false });
   });
+
+  test("a stencil's own lines: lower, and the bar fills at the top one", async ({ page }) => {
+    // The rule with three lower lines handed in: 0.16 passes on the lowest
+    // after two seconds, 0.14 never does, and the standard rule is untouched.
+    const out = await page.evaluate(() => {
+      const L = [[0.225, 600], [0.188, 1000], [0.15, 2000]];
+      const run = (score, lines) => {
+        let st = { since: [], passed: false };
+        for (let i = 0; i < 12; i++) { st = window.Lens.passRule(st, score, i * 250, lines); if (st.passed) return i; }
+        return null;
+      };
+      return { low: run(0.16, L), lower: run(0.14, L), standard: run(0.16), of: window.Lens.linesOf({ lines: [0.225, 0.188, 0.15] }).map((l) => l[0]),
+               bad: [window.Lens.linesOf({ lines: [0.2, 0.25, 0.3] }), window.Lens.linesOf({ lines: [0.3, 0.25] }),
+                     window.Lens.linesOf({ lines: [1.2, 0.5, 0.2] }), window.Lens.linesOf({})].map((l) => l[0][0]) };
+    });
+    expect(out.low).toBe(8);
+    expect(out.lower).toBe(null);
+    expect(out.standard).toBe(null);
+    expect(out.of).toEqual([0.225, 0.188, 0.15]);
+    // Anything but three descending scores in (0, 1] is the standard rule.
+    expect(out.bad).toEqual([0.3, 0.3, 0.3, 0.3]);
+  });
+
+  test("a hunt file's lines reach the screen: the bar is full at that stencil's top line", async ({ page }) => {
+    await page.goto("fixture-lines/");
+    const withLines = page.locator("#grid .tile").first();
+    await withLines.click();
+    await expect(page.locator("#lens")).toBeVisible();
+    await page.waitForFunction(() => window.Lens.stats().place);
+    expect((await page.evaluate(() => window.Lens.stats())).lines).toEqual([0.225, 0.188, 0.15]);
+    await page.evaluate(() => window.Lens.fakeScore(0.225));
+    await expect(page.locator("#matchfill")).toHaveAttribute("style", /width: 100%/);
+    await page.evaluate(() => window.Lens.fakeScore(0.1125));
+    await expect(page.locator("#matchfill")).toHaveAttribute("style", /width: 50%/);
+    await page.locator("#lensback").click();
+    await expect(page.locator("#lens")).toBeHidden();
+    // The next stencil has no lines of its own and plays on the standard three.
+    await page.locator("#grid .tile").nth(1).click();
+    await expect(page.locator("#lens")).toBeVisible();
+    await page.waitForFunction(() => window.Lens.stats().place);
+    expect((await page.evaluate(() => window.Lens.stats())).lines).toEqual([0.3, 0.25, 0.2]);
+  });
 });
+

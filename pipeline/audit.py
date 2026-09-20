@@ -101,6 +101,27 @@ FLOOR = 0.35        # under this a stencil is not worth walking to
 # another photograph of the hunt can be passed standing in front of that one.
 CONFUSION = 0.20
 
+# The pass lines as lens.js has them, and how far they come down for a hard
+# stencil. In the field a stencil reaches about two thirds of its attainable
+# score — the phone moves, the light differs, the photograph held still — so
+# one that attains 0.45 reaches the middle line with room to spare and gets
+# the standard lines, and below that the three lines scale down together,
+# never under three quarters of themselves, and never so far that the lowest
+# comes within a margin of the stencil's worst wrong-place score. The lines
+# are baked into the hunt file per stencil; a stencil with none uses the
+# standard three.
+STANDARD_LINES = (0.30, 0.25, 0.20)
+LINE_FULL = 0.45     # attainable at which the standard lines apply in full
+LINE_MIN = 0.75      # the lines never come down further than this share
+LINE_MARGIN = 0.03   # the lowest line stays this far above the confusion
+
+# The photograph judged on its own, before it is cut: the same test the
+# stencil will face, run on the photograph against itself. What the capture
+# page runs after the shutter (lens.js's assess, the same arithmetic) and
+# what the build prints beside each photograph. Specks at the working size:
+# the tool drops blobs under sixty pixels at 800 px, which is this at 320.
+ASSESS_SPECK = 12
+
 PHOTO_SUFFIXES = (".jpg", ".jpeg", ".png")
 
 # A part of one alignment: the frame pixels it reads, the weight of each, and
@@ -278,6 +299,117 @@ def score(E, aligns):
     return max(0.0, best[0]), best[1], best[2]
 
 
+def lines_for(attainable, confusion):
+    """The pass lines for one stencil, or None for the standard three. Both
+    numbers are the worse of the two working frames: a slow phone is a
+    player too."""
+    f = max(LINE_MIN, min(1.0, attainable / LINE_FULL))
+    lowest = STANDARD_LINES[-1] * f
+    if confusion + LINE_MARGIN > lowest:
+        f = min(1.0, (confusion + LINE_MARGIN) / STANDARD_LINES[-1])
+    if f >= 1.0:
+        return None
+    return [round(line * f, 3) for line in STANDARD_LINES]
+
+
+def assess(im):
+    """One photograph against itself, as lens.js's assess does it on the
+    capture page: its own strongest edges as the stencil, thickened and
+    weighted as the scorer would have them, the ring beside them, and the
+    score at the true alignment. Also how much of the frame those edges
+    cover once the specks are gone, which is the tool's sparse test at this
+    size. A predictor of the attainable score, not the score: the cut, the
+    search and the shrink all differ a little, and the capture page's lines
+    are set with that in mind."""
+    frame = frame_for(im.size, WORK_PX)
+    fw, fh = frame
+    E = edge_frame(im, frame)
+    mask0 = stencil.threshold(E, fw, fh, stencil.KEEP)
+    kept = [c for c in stencil.components(mask0, fw, fh) if len(c) >= ASSESS_SPECK]
+    inked = sum(len(c) for c in kept)
+    interior = max(1, (fw - 4) * (fh - 4))
+    mask1 = stencil.from_components(kept, fw, fh)
+    shape_img = Image.new("L", frame)
+    shape_img.putdata([255 if v else 0 for v in mask1])
+    strength_img = Image.new("L", frame)
+    strength_img.putdata([round(255 * min(1.0, E[i])) if mask1[i] else 0 for i in range(fw * fh)])
+    shape = stencil.pixels(shape_img.filter(ImageFilter.MaxFilter(5)))
+    strength = stencil.pixels(strength_img.filter(ImageFilter.MaxFilter(5)))
+    grown = stencil.pixels(shape_img.filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.MaxFilter(2 * RING + 1)))
+    won = wsum = 0.0
+    ring_sum = 0.0
+    ring_n = 0
+    for i in range(fw * fh):
+        if shape[i]:
+            w = strength[i] / 255
+            won += w * E[i]
+            wsum += w
+        elif grown[i]:
+            ring_sum += E[i]
+            ring_n += 1
+    on = won / wsum if wsum else 0.0
+    off = ring_sum / ring_n if ring_n else 0.0
+    score = max(0.0, (on - off) / (on + off + 0.001))
+    inked_frac = inked / interior
+    return {
+        "score": round(score, 3), "on": round(on, 3), "off": round(off, 3),
+        "inked": round(inked_frac, 4),
+        "sparse": inked_frac < stencil.SPARSE_SHARE * stencil.KEEP,
+        "frame": f"{fw}x{fh}",
+    }
+
+
+def worst_partner(row):
+    """The photograph the stencil confuses with most, on whichever working
+    frame confuses it more, so the name beside the number is the number's."""
+    slow = row.get("confusion_slow", 0.0)
+    if slow > row["confusion"] and row.get("confused_with_slow"):
+        return row["confused_with_slow"]
+    return row.get("confused_with")
+
+
+def why_weak(row, judged):
+    """One sentence on what made a photograph weak, as far as the numbers
+    say: the ring beside the lines is the number that decides the score, so
+    a busy ring is named first; a frame with little in it after the specks
+    are gone is named next; and a subject that is neither is simply faint."""
+    off = row["off"]
+    if off >= 0.20:
+        return (f"busy beside its lines (edges beside them {off:.2f} against "
+                f"{row['on']:.2f} under them): find plain background behind the subject "
+                "— sky, a wall, open ground — or get closer so it fills the frame")
+    if judged and judged.get("sparse"):
+        return (f"too little in the frame ({judged['inked']:.1%} of it after the specks go): "
+                "get closer, or pick a subject with bigger, plainer edges")
+    return ("faint edges under the lines: pick a subject with strong, simple outlines, "
+            "and stand where they are against something plain")
+
+
+def verdicts(rows, floor, assessed=None):
+    """What to do with each stencil, as the build does it: drop the ones that
+    cannot score or that pass in the wrong place, and give the rest their
+    pass lines. `assessed` is assess() of each photograph, by id, for the
+    sparse test in the reason. Returns a list of {id, keep, lines, why} in
+    the rows' order."""
+    out = []
+    for r in rows:
+        att = min(r["attainable"], r["attainable_slow"])
+        conf = max(r["confusion"], r["confusion_slow"])
+        judged = (assessed or {}).get(r["id"])
+        if floor > 0 and att < floor:
+            out.append({"id": r["id"], "keep": False, "lines": None,
+                        "why": f"attainable {att:.3f} is under the {floor:g} floor: "
+                               + why_weak(r, judged)})
+        elif floor > 0 and conf >= CONFUSION:
+            out.append({"id": r["id"], "keep": False, "lines": None,
+                        "why": f"scores {conf:.3f} standing in front of {worst_partner(r)}, "
+                               f"over the {CONFUSION:g} line: it can be passed in the wrong "
+                               "place — a different subject, or the other one from further off"})
+        else:
+            out.append({"id": r["id"], "keep": True, "lines": lines_for(att, conf), "why": None})
+    return out
+
+
 def find_photos(stencils, photos):
     """The photograph each stencil was cut from, matched by id the way
     stencil.py made the id in the first place. A stencil with no photograph
@@ -360,7 +492,8 @@ def measure(hunt_path, photos):
         # however close the raw score sits to a rounding boundary.
         attainable = against[sid]
         slow_against = {k: round(v[0], 3) for k, v in slow[sid].items()}
-        slow_elsewhere = [v for k, v in slow_against.items() if k != sid]
+        slow_elsewhere = {k: v for k, v in slow_against.items() if k != sid}
+        slow_worst_at = max(slow_elsewhere, key=slow_elsewhere.get) if slow_elsewhere else None
         rows.append({
             "id": sid,
             "photo": str(found[sid]),
@@ -377,7 +510,8 @@ def measure(hunt_path, photos):
             # the worse of the two, because a stencil that passes in the wrong
             # place on a slow phone still passes in the wrong place.
             "attainable_slow": slow_against[sid],
-            "confusion_slow": max(slow_elsewhere) if slow_elsewhere else 0.0,
+            "confusion_slow": slow_elsewhere[slow_worst_at] if slow_worst_at else 0.0,
+            "confused_with_slow": slow_worst_at,
             "against": against,
         })
     return hunt, rows

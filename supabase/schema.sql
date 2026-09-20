@@ -120,3 +120,8 @@ create policy "the phone may post an attempt" on attempts
 --   select hunt, stencil, name, peak_smooth, above_ms, ms, trace
 --     from attempts where outcome = 'back' and peak_smooth >= 0.15
 --    order by opened_at;
+
+-- Added with the capture page's verdict: the score the page gave the
+-- photograph before it went up, so it can be held against what the build
+-- measured once the stencil was cut.
+alter table captures add column judged real check (judged >= 0 and judged <= 1);

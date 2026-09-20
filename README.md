@@ -163,6 +163,29 @@ measures a hunt without judging it, for a hunt already in the field or a cut
 being compared with the one before it, and `--json` keeps the numbers to
 compare with.
 
+The runner does this before it commits. `from_captures.py` cuts every
+photograph, measures them all together, and publishes only the ones that
+clear the floor and confuse with nothing: the rest are left out, their files
+with them, and the log says which and why, as far as the numbers can tell
+(a busy ring beside the lines, too little in the frame, faint edges). So
+capture more than you need and let the build choose. A stencil that clears
+the floor but attains under 0.45 is published with its own three pass lines,
+lower than the standard 0.30, 0.25 and 0.20 by the same factor, never under
+three quarters of them and never so low that the lowest comes within 0.03 of
+the stencil's worst wrong-place score; they are written into the hunt file
+as `lines` and the camera screen plays that stencil on them. In the field a
+stencil reaches about two thirds of its attainable score, which is what
+these numbers are set from. Hunts built before this play on the standard
+lines until they are rebuilt.
+
+The capture page judges each photograph before it goes up, with the same
+arithmetic run on the photograph against itself (`Lens.assess`, mirrored by
+the audit's `assess()`), and refuses a shot that would fail the floor with a
+sentence on what to change; a marginal one goes up with a warning. Over the
+twenty-five photographs of three hunts the page's number predicts the
+build's to about 0.05. The page's verdict travels with the row as `judged`,
+so the two can be compared on every hunt that follows.
+
 Then run the tests, including the fake-camera pass for the new hunt:
 
     cd tests && HUNT=<slug> npx playwright test feed.spec.js
@@ -255,6 +278,15 @@ from. It exists so that the pass lines and the choice of stencils can be
 tuned on what players saw rather than on what the audit predicts: the audit
 says what a stencil can score against its own photograph, and this says what
 it did score against the room.
+
+## Two nudges
+
+The camera screen says "Turn the phone upright" (or sideways) when the phone
+is held the wrong way round for the stencil: held sideways, a portrait
+stencil is letterboxed into a fraction of the frame and scored there, and a
+player spent two minutes on one like that. And after half a minute under the
+lowest line with the hint untaken, it offers the hint in a word under the
+button; a tap on the offer takes it, at the same cost.
 
 ## The hint
 

@@ -72,13 +72,14 @@ jobs:
           MANIFEST: ${{ inputs.manifest }}
         run: printf '%s' "$MANIFEST" > "$RUNNER_TEMP/manifest.json"
 
-      - name: Fetch the photographs and cut the stencils
+      - name: Fetch the photographs, cut the stencils, and keep the ones that can score
         env:
           SLUG: ${{ inputs.slug }}
           NAME: ${{ inputs.name }}
           LOCATIONS: ${{ inputs.locations }}
           KEEP: ${{ inputs.keep }}
           SPECK: ${{ inputs.speck }}
+          FLOOR: ${{ inputs.floor }}
         run: |
           places=--no-locations
           if [ "$LOCATIONS" = "true" ]; then places=; fi
@@ -92,15 +93,14 @@ jobs:
             --slug "$SLUG" --name "$NAME" \
             --manifest "$RUNNER_TEMP/manifest.json" \
             --base https://ntgsksywctywwzzaaffq.supabase.co \
-            $places $tune
+            --floor "${FLOOR:-0.35}" $places $tune
 
-      # What the tool just cut, measured against the photographs it was cut
-      # from: the attainable score where a stencil belongs, and the best
-      # score it can reach anywhere else in the same hunt. A stencil that
-      # cannot clear the pass lines where it belongs, or that reaches them
-      # somewhere it does not, is a photograph to take again, and this is
-      # where that is found out rather than in the street.
-      - name: Measure the new stencils against their photographs
+      # The tool above already left out what cannot score and said why. This
+      # measures what it kept, once more, against the photographs it was cut
+      # from, so the numbers for the published hunt are in the log on their
+      # own: the attainable score where a stencil belongs, and the best it
+      # reaches anywhere else in the hunt.
+      - name: Measure the published stencils against their photographs
         env:
           SLUG: ${{ inputs.slug }}
           FLOOR: ${{ inputs.floor }}

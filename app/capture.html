@@ -94,6 +94,7 @@
   #flash.show { visibility: visible; opacity: .92; transition: none; }
   #flash.good { background: var(--good); }
   #flash.bad { background: var(--warn); }
+  #flash.warn { background: #8A5A00; }
 </style>
 </head>
 <body>
@@ -112,6 +113,7 @@
 </div>
 <div id="flash"></div>
 <!-- SUPABASE GOES HERE -->
+<script src="lens.js"></script>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -209,17 +211,45 @@ function cameraGone() {
 /* ---- the flash ----
    Green for a moment: the shot went up. Red with the reason: it did not, and
    the count did not move. */
-function flash(ok, msg) {
+// Green for a moment, red or amber for long enough to read what it says:
+// a sentence of advice needs longer than a status.
+function flash(level, msg) {
+  const kind = level === true ? "good" : level === false ? "bad" : level;
   const f = $("flash");
   clearTimeout(flash._t);
-  f.textContent = ok ? "" : msg;
-  f.className = "show " + (ok ? "good" : "bad");
+  f.textContent = kind === "good" ? "" : msg;
+  f.className = "show " + kind;
+  const hold = kind === "good" ? 600 : (msg && msg.length > 60 ? 6500 : 3000);
   flash._t = setTimeout(() => {
     f.className = "";
     // The words go once the fade has finished, so a message that has faded is
     // not on the page any more.
     flash._t = setTimeout(() => { f.textContent = ""; }, 500);
-  }, ok ? 600 : 3000);
+  }, hold);
+}
+
+/* ---- the verdict ----
+   The photograph is judged before it goes anywhere, with the scorer's own
+   arithmetic (lens.js's assess): its strongest edges as the stencil, the
+   ring beside them, the score at the true alignment. Over the twenty-five
+   photographs of three hunts that number predicts the attainable score the
+   build measures to about 0.05, and the build refuses a stencil under 0.35.
+   So under 0.36 the shot is refused here, with what to change; under 0.46
+   it goes up with a warning that the build may still leave it out; and
+   above that it is simply taken. The number travels with the row, so the
+   two judgements can be compared on every hunt that follows. */
+const JUDGE_BLOCK = 0.36;
+const JUDGE_GOOD = 0.46;
+function advice(j) {
+  if (j.off >= 0.20) {
+    return "too much going on beside the edges. Find plain background behind the subject "
+         + "(sky, a wall, open ground), or get closer so it fills the frame.";
+  }
+  if (j.sparse) {
+    return "too little in the frame. Get closer, or pick a subject with bigger, plainer edges.";
+  }
+  return "the edges are faint. Pick a subject with strong, simple outlines, "
+       + "and stand where they are against something plain.";
 }
 
 /* ---- the shot ----
@@ -233,7 +263,7 @@ function snap(video) {
     canvas.width = w; canvas.height = h;
     canvas.getContext("2d").drawImage(video, 0, 0, w, h);
     canvas.toBlob((blob) => {
-      if (blob) resolve(blob); else reject(new Error("The picture could not be made."));
+      if (blob) resolve({ blob, canvas }); else reject(new Error("The picture could not be made."));
     }, "image/jpeg", 0.92);
   });
 }
@@ -269,7 +299,7 @@ async function request(what, url, init) {
 // points at a picture that is not there. The row carries the slug, the clue,
 // and where the phone was, so the session gets the hunt without the owner
 // moving a file.
-async function send(slug, blob, clue) {
+async function send(slug, blob, clue, judged) {
   const base = SUPABASE.url.replace(/\/$/, "");
   const path = slug + "/" + Date.now() + "-" + hex16() + ".jpg";
   const auth = { apikey: SUPABASE.anon_key, Authorization: "Bearer " + SUPABASE.anon_key };
@@ -286,6 +316,7 @@ async function send(slug, blob, clue) {
       lat: lastFix ? lastFix.lat : null,
       lon: lastFix ? lastFix.lon : null,
       accuracy: lastFix ? lastFix.accuracy : null,
+      judged: judged ? judged.score : null,
     }),
   });
 }
@@ -317,14 +348,25 @@ async function shoot() {
   busy = true;
   refresh();
   try {
-    const blob = await snap($("feed"));
+    const shot = await snap($("feed"));
     const clue = $("clue").value.trim().slice(0, 200);
-    if (SUPABASE) await send(slug, blob, clue);
-    else download(slug, blob);
+    // Judged before it goes anywhere. A shot that cannot score is not taken,
+    // and the flash says what to change; the count stays where it was.
+    const judged = window.Lens && window.Lens.assess ? window.Lens.assess(shot.canvas) : null;
+    if (judged && judged.score < JUDGE_BLOCK) {
+      flash(false, "Not this one: " + advice(judged));
+      return;
+    }
+    if (SUPABASE) await send(slug, shot.blob, clue, judged);
+    else download(slug, shot.blob);
     shots += 1;
     $("count").textContent = String(shots);
     $("clue").value = "";
-    flash(true);
+    if (judged && judged.score < JUDGE_GOOD) {
+      flash("warn", "Taken, but weak: " + advice(judged) + " The build may leave it out.");
+    } else {
+      flash(true);
+    }
   } catch (err) {
     flash(false, err && err.message ? err.message : String(err));
   } finally {

@@ -95,7 +95,7 @@ class HuntTest(unittest.TestCase):
         cls.addClassCleanup(cls.tmp.cleanup)
         cls.proc = run("--slug", SLUG, "--name", NAME, "--manifest", cls.manifest,
                        "--base", cls.bucket, "--out", cls.out, "--content", cls.content,
-                       "--long", "200")
+                       "--long", "200", "--floor", "0")
 
     def test_exits_cleanly_and_says_what_it_made(self):
         self.assertEqual(self.proc.returncode, 0, self.proc.stderr)
@@ -177,7 +177,7 @@ class HuntTest(unittest.TestCase):
         proc = run("--slug", SLUG, "--name", NAME, "--manifest", self.manifest,
                    "--base", self.bucket, "--out", self.out, "--content", content,
                    "--photos", Path(self.tmp.name) / "photos", "--no-locations",
-                   "--long", "200")
+                   "--long", "200", "--floor", "0")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         hunt = hunt_of(content)
         self.assertNotIn("map", hunt)
@@ -192,7 +192,7 @@ class HuntTest(unittest.TestCase):
         content = root / "only" / f"{SLUG}.json"
         proc = run("--slug", SLUG, "--name", NAME, "--manifest", manifest,
                    "--base", self.bucket.as_uri(), "--out", self.out, "--content", content,
-                   "--photos", root / "photos", "--long", "200")
+                   "--photos", root / "photos", "--long", "200", "--floor", "0")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue((root / "photos" / "front-door.jpg").is_file())
         self.assertEqual([s["id"] for s in hunt_of(content)["stencils"]], ["front-door"])
@@ -217,7 +217,7 @@ class RefusalTest(unittest.TestCase):
         manifest.write_text(json.dumps(rows), encoding="utf-8")
         proc = run("--slug", SLUG, "--name", NAME, "--manifest", manifest,
                    "--base", self.bucket, "--out", self.out, "--content", self.content,
-                   "--photos", self.photos, "--long", "200")
+                   "--photos", self.photos, "--long", "200", "--floor", "0")
         self.assertNotEqual(proc.returncode, 0)
         self.assertFalse(self.content.exists(), "a hunt file was left behind")
         return proc
@@ -264,7 +264,7 @@ class RefusalTest(unittest.TestCase):
         other = self.root / "content" / "other.json"
         proc = run("--slug", SLUG, "--name", NAME, "--manifest", manifest,
                    "--base", self.bucket, "--out", self.out, "--content", other,
-                   "--photos", self.photos, "--long", "200")
+                   "--photos", self.photos, "--long", "200", "--floor", "0")
         self.assertEqual(proc.returncode, 2)
         self.assertIn("names the hunt 'other'", proc.stderr)
         self.assertFalse(other.exists())
@@ -297,3 +297,97 @@ class BoxTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def calm_scene(path, seed):
+    """scene()'s shapes on a ground with the faint grain a photograph has. A
+    perfectly flat ground has no edge at all beside the lines, and against
+    such a frame any stencil that touches a line scores as if it were the
+    right one; the grain is what keeps the measurement honest."""
+    import random
+    rnd = random.Random(seed)
+    im = Image.new("RGB", (300, 400))
+    im.putdata([(v, v - 4, v - 12) for v in (rnd.randint(196, 210) for _ in range(300 * 400))])
+    d = ImageDraw.Draw(im)
+    d.rectangle([40, 50, 250, 350], outline=(35, 30, 30), width=6)
+    d.rectangle([80, 90, 210, 200], outline=(35, 30, 30), width=5)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    im.save(path, "JPEG", quality=92)
+
+
+def blank_scene(path):
+    """A flat frame: a wall, a sky. No edge at all, so the tool keeps nothing
+    and the stencil cannot score — the one weak photograph whose numbers are
+    the same on every run."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (300, 400), (150, 150, 150)).save(path, "JPEG", quality=100)
+
+
+class DropTest(unittest.TestCase):
+    """The floor: a photograph whose stencil cannot score is left out with a
+    reason, its files with it, and the rest are published on their own pass
+    lines where they need them. With the floor at nought everything stays
+    and the weak one gets lower lines."""
+
+    ROWS = [
+        {"id": "plain", "path": "field/plain.jpg", "lat": 51.4700, "lon": -0.1000, "accuracy": 5},
+        {"id": "busy", "path": "field/busy.jpg", "lat": 51.4712, "lon": -0.0984, "accuracy": 5},
+    ]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.bucket = root / "bucket"
+        calm_scene(self.bucket / "field" / "plain.jpg", 1)
+        blank_scene(self.bucket / "field" / "busy.jpg")
+        self.manifest = root / "manifest.json"
+        self.manifest.write_text(json.dumps(self.ROWS), encoding="utf-8")
+        self.content = root / "content" / "dropfield.json"
+        self.photos = BASE / "photos" / "dropfield"
+        self.out = Path(tempfile.mkdtemp(prefix="tmp-test-", dir=BASE / "app" / "img"))
+        self.addCleanup(shutil.rmtree, self.out, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, self.photos, ignore_errors=True)
+        self.addCleanup(self.tmp.cleanup)
+
+    def go(self, *extra):
+        return run("--slug", "dropfield", "--name", "Drop Field", "--manifest", self.manifest,
+                   "--base", self.bucket, "--out", self.out, "--content", self.content,
+                   "--long", "200", *extra)
+
+    def test_the_weak_one_is_left_out_with_a_reason_and_its_files_go(self):
+        proc = self.go()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("published 1 of 2:", proc.stderr)
+        self.assertIn("not published, 1:", proc.stderr)
+        self.assertRegex(proc.stderr, r"busy: attainable 0\.\d+ is under the 0\.35 floor: ")
+        self.assertRegex(proc.stderr, r"(busy beside its lines|faint edges|too little in the frame)")
+        self.assertIn("judged", proc.stderr)
+        h = hunt_of(self.content)
+        self.assertEqual([s["id"] for s in h["stencils"]], ["plain"])
+        self.assertNotIn("lines", h["stencils"][0])
+        self.assertTrue((self.out / "plain-stencil.png").is_file())
+        for suffix in ("-stencil.png", "-stencil-hint.png", "-stencil-preview.jpg"):
+            self.assertFalse((self.out / f"busy{suffix}").exists(), suffix)
+        # The map is the box round what was published.
+        self.assertIn("map", h)
+
+    def test_with_the_floor_at_nought_everything_stays_and_the_weak_one_gets_lower_lines(self):
+        proc = self.go("--floor", "0")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("published 2 of 2:", proc.stderr)
+        self.assertNotIn("not published", proc.stderr)
+        h = {s["id"]: s for s in hunt_of(self.content)["stencils"]}
+        self.assertNotIn("lines", h["plain"])
+        # Nothing attained and nothing confused: the lines come down as far
+        # as they ever do, three quarters of the standard ones.
+        self.assertEqual(h["busy"]["lines"], [0.225, 0.188, 0.15])
+
+    def test_nothing_to_publish_is_said_and_no_hunt_file_is_left(self):
+        self.manifest.write_text(json.dumps([self.ROWS[1]]), encoding="utf-8")
+        proc = self.go()
+        self.assertEqual(proc.returncode, 3, proc.stderr)
+        self.assertIn("nothing to publish", proc.stderr)
+        self.assertIn("not published, 1:", proc.stderr)
+        self.assertFalse(self.content.exists())
+        self.assertFalse((self.out / "busy-stencil.png").exists())
+

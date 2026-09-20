@@ -4,6 +4,7 @@ const { hunt, prepare, withName, stubBoard } = require("./helpers");
 
 const FIX = hunt("fixture");
 const withHint = FIX.stencils.find((s) => s.hint);
+const bare = FIX.stencils.find((s) => !s.hint);
 const without = FIX.stencils.find((s) => !s.hint);
 
 async function openTile(page, id) {
@@ -114,6 +115,55 @@ test.describe("the hint", () => {
     await openTile(page, withHint.id);
     await expect(page.locator("#lenshintbtn")).toBeVisible();
     await expect(page.locator("#lenshint")).toBeHidden();
+  });
+  test("after half a minute under the line the hint is offered, and a tap on the offer takes it", async ({ page }) => {
+    await page.goto("fixture/");
+    await expect(page.locator("#s-main")).toBeVisible();
+    // Fake timers from here: the offer is armed when the screen opens.
+    await page.clock.install();
+    await page.locator(`#grid .tile[data-id="${withHint.id}"]`).click();
+    await expect(page.locator("#lens")).toBeVisible();
+    // Under the line, and the loop stopped so the fake camera's own edges
+    // cannot lift it. Nothing is offered before the half minute is up.
+    await page.evaluate(() => window.Lens.fakeScore(0.05));
+    await page.clock.fastForward(20000);
+    await expect(page.locator("#lensnudge")).toBeHidden();
+    await page.clock.fastForward(11000);
+    await expect(page.locator("#lensnudge")).toBeVisible();
+    await expect(page.locator("#lensnudge")).toHaveText("Try the hint?");
+    await page.locator("#lensnudge").click();
+    await expect(page.locator("#lenshint")).toBeVisible();
+    await expect(page.locator("#lensnudge")).toBeHidden();
+    await expect(page.locator("#lenshintbtn")).toBeHidden();
+    // Taken through the offer, it is charged like a tap on the button.
+    expect(await page.evaluate((id) => !!window.__th.state().hints[id], withHint.id)).toBe(true);
+  });
+
+  test("no offer while the score is at the line, nor for a stencil with no hint, nor once the hint is taken", async ({ page }) => {
+    await page.goto("fixture/");
+    await expect(page.locator("#s-main")).toBeVisible();
+    // Fake timers from here: the offer is armed when the screen opens.
+    await page.clock.install();
+    await page.locator(`#grid .tile[data-id="${withHint.id}"]`).click();
+    await expect(page.locator("#lens")).toBeVisible();
+    await page.evaluate(() => window.Lens.fakeScore(0.22));
+    await page.clock.fastForward(31000);
+    await expect(page.locator("#lensnudge")).toBeHidden();
+    await page.locator("#lensback").click();
+    await expect(page.locator("#lens")).toBeHidden();
+    await page.locator(`#grid .tile[data-id="${bare.id}"]`).click();
+    await expect(page.locator("#lens")).toBeVisible();
+    await page.evaluate(() => window.Lens.fakeScore(0));
+    await page.clock.fastForward(31000);
+    await expect(page.locator("#lensnudge")).toBeHidden();
+    await page.locator("#lensback").click();
+    await expect(page.locator("#lens")).toBeHidden();
+    await page.locator(`#grid .tile[data-id="${withHint.id}"]`).click();
+    await expect(page.locator("#lens")).toBeVisible();
+    await page.locator("#lenshintbtn").click();
+    await page.evaluate(() => window.Lens.fakeScore(0));
+    await page.clock.fastForward(31000);
+    await expect(page.locator("#lensnudge")).toBeHidden();
   });
 });
 
