@@ -1,0 +1,81 @@
+{
+  "id": "dulwich",
+  "name": "Dulwich",
+  "test_mode": false,
+  "map": {
+    "bounds": [
+      [
+        51.444,
+        -0.0831
+      ],
+      [
+        51.447,
+        -0.0774
+      ]
+    ]
+  },
+  "stencils": [
+    {
+      "id": "shot-3",
+      "src": "img/dulwich/shot-3-stencil.png",
+      "location": {
+        "lat": 51.4455385663762,
+        "lon": -0.0809802237444827
+      },
+      "hint": "img/dulwich/shot-3-stencil-hint.png",
+      "lines": [
+        0.279,
+        0.233,
+        0.186
+      ]
+    },
+    {
+      "id": "shot-4",
+      "src": "img/dulwich/shot-4-stencil.png",
+      "location": {
+        "lat": 51.4456147210505,
+        "lon": -0.0806586855494129
+      },
+      "hint": "img/dulwich/shot-4-stencil-hint.png"
+    },
+    {
+      "id": "shot-7",
+      "src": "img/dulwich/shot-7-stencil.png",
+      "hint": "img/dulwich/shot-7-stencil-hint.png",
+      "lines": [
+        0.274,
+        0.228,
+        0.183
+      ]
+    },
+    {
+      "id": "shot-9",
+      "src": "img/dulwich/shot-9-stencil.png",
+      "location": {
+        "lat": 51.4453162883692,
+        "lon": -0.0795623117300961
+      },
+      "hint": "img/dulwich/shot-9-stencil-hint.png"
+    },
+    {
+      "id": "shot-10",
+      "src": "img/dulwich/shot-10-stencil.png",
+      "hint": "img/dulwich/shot-10-stencil-hint.png",
+      "lines": [
+        0.268,
+        0.224,
+        0.179
+      ]
+    },
+    {
+      "id": "shot-13",
+      "src": "img/dulwich/shot-13-stencil.png",
+      "hint": "img/dulwich/shot-13-stencil-hint.png",
+      "lines": [
+        0.28,
+        0.234,
+        0.187
+      ]
+    }
+  ]
+}
