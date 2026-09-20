@@ -23,6 +23,7 @@
     --accent-ink: #FFFFFF;
     --good: #2F6B4F; --good-soft: #DCE9E2;
     --warn: #9E2B25; --warn-soft: #F0DEDB;
+    --caution: #8A5A00;
     --key: #E0E0DA; --key-ink: #191B1C; --shadow: 0 1px 3px rgba(25,27,28,.13);
   }
   @media (prefers-color-scheme: dark) {
@@ -32,6 +33,7 @@
       --accent-ink: #141617;
       --good: #6FBF97; --good-soft: #1E3229;
       --warn: #E08078; --warn-soft: #3A2220;
+      --caution: #D99A2B;
       --key: #2A2E30; --key-ink: #E8E7E3; --shadow: 0 1px 3px rgba(0,0,0,.45);
     }
   }
@@ -41,6 +43,7 @@
     --accent-ink: #141617;
     --good: #6FBF97; --good-soft: #1E3229;
     --warn: #E08078; --warn-soft: #3A2220;
+    --caution: #D99A2B;
     --key: #2A2E30; --key-ink: #E8E7E3; --shadow: 0 1px 3px rgba(0,0,0,.45);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -94,7 +97,7 @@
   #flash.show { visibility: visible; opacity: .92; transition: none; }
   #flash.good { background: var(--good); }
   #flash.bad { background: var(--warn); }
-  #flash.warn { background: #8A5A00; }
+  #flash.warn { background: var(--caution); }
 </style>
 </head>
 <body>
