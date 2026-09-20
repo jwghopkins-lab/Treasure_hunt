@@ -39,6 +39,15 @@
       "hint": "img/dulwich/shot-4-stencil-hint.png"
     },
     {
+      "id": "shot-6",
+      "src": "img/dulwich/shot-6-stencil.png",
+      "location": {
+        "lat": 51.4456183417683,
+        "lon": -0.0802663892791565
+      },
+      "hint": "img/dulwich/shot-6-stencil-hint.png"
+    },
+    {
       "id": "shot-7",
       "src": "img/dulwich/shot-7-stencil.png",
       "hint": "img/dulwich/shot-7-stencil-hint.png",
