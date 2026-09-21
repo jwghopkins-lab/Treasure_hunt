@@ -421,7 +421,7 @@ def main(argv=None):
             shown = "/".join(f"{v:.3f}" for v in lines)
             # Raised lines are the answer to a wrong-place score the stencil
             # can afford; lowered ones are a hard stencil's due.
-            shown += " raised" if lines[-1] > audit.STANDARD_LINES[-1] else " lowered"
+            shown += " raised" if lines[0] > audit.STANDARD_LINES[0] else " lowered"
         print(f"  {s['id']}: {numbers(s['id'])}, lines {shown}", file=sys.stderr)
     dropped = [(s, v) for s, v in zip(stencils, said) if not v["keep"]]
     if dropped:

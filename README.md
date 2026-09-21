@@ -175,7 +175,8 @@ A published stencil may carry its own three pass lines, written into the
 hunt file as `lines`, and the camera screen plays it on them. They go down
 for a hard stencil: one that clears the floor but attains under 0.45 gets
 the standard 0.30, 0.25 and 0.20 lowered by the same factor, never under
-three quarters of them. They go up for a stencil that scores in front of
+three quarters of them and never so far that the lowest comes within 0.03
+of its worst wrong-place score. They go up for a stencil that scores in front of
 another photograph: the lowest line is kept 0.03 above its worst wrong-place
 score, as far as the stencil can afford, which is a top line at two thirds
 of what it attains, the share the standard top is of a stencil attaining

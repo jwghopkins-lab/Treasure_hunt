@@ -312,7 +312,8 @@ def lines_for(attainable, confusion):
     what a player reaches in the field. A stencil that cannot afford the
     whole margin plays what it can afford while its wrong-place score is
     under the confusion line, and gets no lines at all once it is over: that
-    one passes in the wrong place, and the build leaves it out."""
+    one passes in the wrong place, and the build leaves it out (with the
+    floor at 0 it is kept, on the standard lines, and measured)."""
     f = max(LINE_MIN, min(1.0, attainable / LINE_FULL))
     ceiling = max(1.0, attainable / LINE_FULL)
     need = (confusion + LINE_MARGIN) / STANDARD_LINES[-1]
@@ -323,6 +324,15 @@ def lines_for(attainable, confusion):
     if abs(f - 1.0) < 1e-9:
         return None
     return [round(line * f, 3) for line in STANDARD_LINES]
+
+
+def well_formed_lines(lines):
+    """Three scores in (0, 1], descending: what build.py and the player's
+    linesOf both insist on, checked here before anything reads lines[-1]."""
+    return (isinstance(lines, list) and len(lines) == len(STANDARD_LINES)
+            and all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                    and 0 < v <= 1 for v in lines)
+            and all(lines[i] < lines[i - 1] for i in range(1, len(lines))))
 
 
 def lowest_line(row):
@@ -501,6 +511,9 @@ def measure(hunt_path, photos):
     for s in stencils:
         if not s.get("id") or not s.get("src"):
             raise AuditError(f"{hunt_path} has a stencil with no id or no src: {s}")
+        if "lines" in s and not well_formed_lines(s["lines"]):
+            raise AuditError(f"{hunt_path}: stencil {s['id']} has lines {s['lines']!r}, "
+                             "which must be three scores in (0, 1], descending")
     found = find_photos(stencils, photos)
     uprights = {sid: upright(path) for sid, path in found.items()}
     fast = one_pass(stencils, found, uprights, WORK_PX)
@@ -583,7 +596,7 @@ def summarise(rows, out):
     if own:
         print("own lines: " + ", ".join(
             f"{r['id']} " + "/".join(f"{v:g}" for v in r["lines"])
-            + (" (raised)" if r["lines"][-1] > STANDARD_LINES[-1] else " (lowered)")
+            + (" (raised)" if r["lines"][0] > STANDARD_LINES[0] else " (lowered)")
             for r in own), file=out)
 
 
@@ -599,6 +612,12 @@ def judge(rows, floor, out=sys.stderr):
     low = [r for r in rows if min(r["attainable"], r["attainable_slow"]) < floor]
     confused = [r for r in rows
                 if max(r["confusion"], r["confusion_slow"]) >= lowest_line(r)]
+    # Lines the hunt file gives a stencil are taken at their word for the
+    # wrong-place test above, so they are checked here against what the
+    # stencil attains: a top line over two thirds of it is one nobody
+    # reaches, whoever wrote it.
+    beyond = [r for r in rows if r.get("lines") and r["lines"][0] > round(
+        STANDARD_LINES[0] * max(1.0, min(r["attainable"], r["attainable_slow"]) / LINE_FULL), 3)]
     if low:
         print(f"audit: under the {floor:g} floor: "
               + ", ".join(f"{r['id']} ({min(r['attainable'], r['attainable_slow']):.3f})"
@@ -609,12 +628,19 @@ def judge(rows, floor, out=sys.stderr):
         print(f"audit: passes in the wrong place: "
               + ", ".join(f"{r['id']} "
                           f"({max(r['confusion'], r['confusion_slow']):.3f} "
-                          f"on {r['confused_with']}"
+                          f"on {worst_partner(r)}"
                           + (f", over its {lowest_line(r):g} line" if r.get("lines") else "")
                           + ")"
                           for r in confused),
               file=out)
-    return 1 if low or confused else 0
+    if beyond:
+        print(f"audit: lines beyond reach: "
+              + ", ".join(f"{r['id']} (top {r['lines'][0]:g}, attains "
+                          f"{min(r['attainable'], r['attainable_slow']):.3f})"
+                          for r in beyond)
+              + " — the top line is at most two thirds of what a stencil attains",
+              file=out)
+    return 1 if low or confused or beyond else 0
 
 
 def main(argv=None):

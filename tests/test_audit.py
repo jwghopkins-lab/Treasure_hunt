@@ -316,7 +316,9 @@ class AuditTest(unittest.TestCase):
             # that is the one the refusal was made on.
             worst = max(row["confusion"], row["confusion_slow"])
             self.assertGreaterEqual(worst, 0.20, row)
-            self.assertIn(f"{name} ({worst:.3f} on {row['confused_with']})", wrong[0])
+            partner = (row["confused_with_slow"] if row["confusion_slow"] > row["confusion"]
+                       else row["confused_with"])
+            self.assertIn(f"{name} ({worst:.3f} on {partner})", wrong[0])
 
     def test_a_broken_input_is_not_the_verdict(self):
         # Exit 1 means the stencils are not worth walking to. A hunt file
@@ -460,6 +462,37 @@ class RuleTest(unittest.TestCase):
         said = io.StringIO()
         self.assertEqual(audit.judge([low], 0.35, out=said), 1)
         self.assertIn("over its 0.2 line", said.getvalue())
+        # Lines a stencil cannot afford are refused too, however they got
+        # into the file: the wrong-place test would otherwise take any
+        # number at its word.
+        tall = dict(self.row("tall", 0.40, 0.35), lines=[0.9, 0.8, 0.7])
+        said = io.StringIO()
+        self.assertEqual(audit.judge([tall], 0.35, out=said), 1)
+        self.assertIn("lines beyond reach: tall (top 0.9, attains 0.400)", said.getvalue())
+        # Exactly what it can afford is not beyond reach.
+        fine = dict(self.row("tall", 0.60, 0.227), lines=[0.4, 0.333, 0.267])
+        self.assertEqual(audit.judge([fine], 0.35, out=io.StringIO()), 0)
+        # The partner named beside the number is the worse frame's.
+        slow = dict(self.row("tall", 0.60, 0.10), confusion_slow=0.30,
+                    confused_with_slow="slowpartner")
+        said = io.StringIO()
+        self.assertEqual(audit.judge([slow], 0.35, out=said), 1)
+        self.assertIn("tall (0.300 on slowpartner)", said.getvalue())
+
+    def test_the_summary_says_raised_by_the_top_line(self):
+        # A raise that rounds its lowest line to exactly 0.2 is still a raise.
+        self.assertEqual(audit.lines_for(0.451, 0.18), [0.301, 0.251, 0.2])
+        rows = [dict(self.row("edge", 0.451, 0.18), lines=[0.301, 0.251, 0.2]),
+                dict(self.row("hard", 0.40, 0.05), lines=[0.267, 0.222, 0.178])]
+        said = io.StringIO()
+        audit.summarise(rows, said)
+        self.assertIn("own lines: edge 0.301/0.251/0.2 (raised), hard 0.267/0.222/0.178 (lowered)",
+                      said.getvalue())
+
+    def test_a_hunt_file_with_bad_lines_is_a_broken_input(self):
+        for bad in (0.5, [0.3, 0.25], [0.3, 0.3, 0.2], [1.2, 0.5, 0.2], ["a", "b", "c"]):
+            self.assertFalse(audit.well_formed_lines(bad), bad)
+        self.assertTrue(audit.well_formed_lines([0.385, 0.321, 0.257]))
 
     def test_why_weak_names_the_ring_first_then_the_frame_then_the_edges(self):
         self.assertIn("busy beside its lines", audit.why_weak(self.row("a", 0.2, 0.1, off=0.21), None))
