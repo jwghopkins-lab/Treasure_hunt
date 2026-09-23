@@ -278,6 +278,42 @@ test.describe("the camera screen", () => {
     await expect(page.locator("#matchtick")).toHaveCount(0);
   });
 
+  test("a word under the bar as the score nears the lowest line, another at it, none once it has fallen back or while a turn is asked for", async ({ page }) => {
+    await page.goto("fixture/");
+    await openStill(page, bare.id);
+    const hold = page.locator("#lenshold");
+    // The fake camera is landscape and the stencil portrait, so the turn
+    // pill is up, and the hold stays out of its place whatever the score.
+    await expect(page.locator("#lensturn")).toBeVisible();
+    await page.evaluate(() => window.Lens.fakeScore(0.22));
+    await expect(hold).toBeHidden();
+    // A landscape stencil, drawn here: the turn pill goes, and the hold can show.
+    await wear(page, await page.evaluate(() => {
+      const c = document.createElement("canvas");
+      c.width = 800; c.height = 600;
+      const ctx = c.getContext("2d");
+      ctx.strokeStyle = "rgba(255,61,0,1)"; ctx.lineWidth = 6;
+      ctx.strokeRect(80, 60, 640, 480);
+      return c.toDataURL();
+    }));
+    await expect(page.locator("#lensturn")).toBeHidden();
+    await page.evaluate(() => window.Lens.fakeScore(0.10));
+    await expect(hold).toBeHidden();
+    // 0.85 of the standard lowest line is 0.17.
+    await page.evaluate(() => window.Lens.fakeScore(0.18));
+    await expect(hold).toBeVisible();
+    await expect(hold).toHaveText(/Nearly/);
+    await page.evaluate(() => window.Lens.fakeScore(0.22));
+    await expect(hold).toHaveText(/Hold it/);
+    await page.evaluate(() => window.Lens.fakeScore(0.05));
+    await expect(hold).toBeHidden();
+    // Words, not a control, under the bar.
+    await page.evaluate(() => window.Lens.fakeScore(0.22));
+    expect(await hold.evaluate((el) => el.tagName)).toBe("DIV");
+    const box = await hold.boundingBox();
+    expect(box.y).toBeGreaterThan(40);
+  });
+
   test("the mask weighs each pixel by the stencil's alpha, and the shape does not move with it", async ({ page }) => {
     await page.goto("fixture/");
     await openStill(page, withClue.id);

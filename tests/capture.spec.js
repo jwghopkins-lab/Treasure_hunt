@@ -38,6 +38,8 @@ test.describe("the capture page", () => {
       return route.fulfill({ status: 404, body: "" });
     });
     await page.goto("capture/");
+    // The line under the count reads the fix the next shot will carry.
+    await expect(page.locator("#fix")).toHaveText("\u00b19 m");
     const slug = page.locator("input[placeholder='hunt']");
     const clue = page.locator("input[placeholder='clue']");
     await expect(slug).toBeVisible();
@@ -50,9 +52,15 @@ test.describe("the capture page", () => {
     await expect(page.locator("#flash")).toContainText("hunt");
     await expect(page.locator("#count")).toHaveText("0");
     await page.waitForTimeout(3600);
-    // No words but the placeholders.
-    const words = await page.evaluate(() => document.body.innerText.replace(/\s+/g, " ").trim());
-    expect(words.replace(/Treasure\s*Hunt/i, "").replace("0", "").trim()).toBe("");
+    // No words but the placeholders and the fix line: the count and the
+    // live reading are numbers, the fix line is the one line of words the
+    // page keeps, and all three are taken out here.
+    const words = await page.evaluate(() => {
+      let text = document.body.innerText;
+      for (const n of document.querySelectorAll("#count, #gaugenum, #fix")) text = text.replace(n.innerText, " ");
+      return text.replace(/\s+/g, " ").trim();
+    });
+    expect(words.replace(/Treasure\s*Hunt/i, "").trim()).toBe("");
     await slug.fill("Trafalgar");
     await clue.fill("Between the fountains, looking north.");
     await page.waitForFunction(() => { const v = document.querySelector("video"); return v && v.videoWidth > 0; });
@@ -139,7 +147,8 @@ test.describe("the capture page", () => {
     // A blank grey feed: no edges, so the verdict is that there is too
     // little in the frame. The count stays at nought and no request leaves.
     const browser = await browserWithFeed("grey.y4m");
-    const context = await mobileContext(browser);
+    // No position in this context, so the line under the count says so.
+    const context = await mobileContext(browser, { geolocation: undefined });
     const page = await context.newPage();
     await page.addInitScript(INIT);
     const requests = [];
@@ -151,8 +160,15 @@ test.describe("the capture page", () => {
       await page.goto("capture/");
       await page.locator("input[placeholder='hunt']").fill("Nowhere");
       await page.waitForFunction(() => { const v = document.querySelector("video"); return v && v.videoWidth > 0; });
+      // The live reading of a blank frame is nought, in the red band.
+      await expect(page.locator("#gaugenum")).toHaveText("0.00");
+      await expect(page.locator("#gaugefill")).toHaveClass("bad");
+      await expect(page.locator("#fix")).toHaveText("no location");
       await page.locator("#shutter").click();
-      await expect(page.locator("#flash")).toContainText("Not this one");
+      // The preview is in the flash, above the words, even for a shot that
+      // was refused; for a blank frame it is an empty canvas.
+      await expect(page.locator("#preview")).toBeVisible();
+      await expect(page.locator("#flash")).toContainText("Not this one 0.00");
       await expect(page.locator("#flash")).toContainText("too little in the frame");
       await expect(page.locator("#count")).toHaveText("0");
       await page.waitForTimeout(500);
@@ -189,10 +205,32 @@ print(json.dumps(audit.assess(audit.upright("photos/fixture/door.jpg"))))`], { c
       await page.goto("capture/");
       await page.locator("input[placeholder='hunt']").fill("Somewhere");
       await page.waitForFunction(() => { const v = document.querySelector("video"); return v && v.videoWidth > 0; });
+      // The live reading, before any shot: the door is well into the green.
+      await expect(page.locator("#gaugefill")).toHaveClass("good");
+      const live = Number(await page.locator("#gaugenum").textContent());
+      expect(live).toBeGreaterThan(0.5);
+      expect(Math.abs(live - expected.score)).toBeLessThanOrEqual(0.03);
       await page.locator("#shutter").click();
+      // The preview first, since it goes with the flash: the stencil's
+      // shape, white, a canvas the size of the working frame with ink on it.
+      const preview = page.locator("#preview");
+      await expect(preview).toBeVisible();
+      const inked = await preview.evaluate((c) => {
+        const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+        let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i]) n++;
+        return { n, w: c.width, h: c.height };
+      });
+      expect(inked.w).toBe(240); expect(inked.h).toBe(320);
+      expect(inked.n).toBeGreaterThan(1000);
       await expect.poll(() => rows.length).toBe(1);
       await expect(page.locator("#count")).toHaveText("1");
-      expect(rows[0].judged).toBeGreaterThan(0.46);
+      expect(rows[0].judged).toBeGreaterThan(0.54);
+      // The flash says it went up, with its number, and nothing about a
+      // location: this context holds a fix.
+      await expect(page.locator("#flashmsg")).toHaveText("Saved " + rows[0].judged.toFixed(2) + ".");
+      await expect(page.locator("#fix")).toHaveText("\u00b120 m");
+      // And the flash goes, the preview with it.
+      await expect(preview).toBeHidden({ timeout: 8000 });
       expect(Math.abs(rows[0].judged - expected.score)).toBeLessThanOrEqual(0.03);
       // The page's own reading of the photograph, off the same arithmetic.
       const judged = await page.evaluate(() => window.Lens.assess(document.querySelector("video")));

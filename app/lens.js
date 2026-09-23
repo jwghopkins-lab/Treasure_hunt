@@ -52,6 +52,8 @@
   const COMPLETE_MS = 1500;         // how long Complete! stays before the screen closes itself
   const TRACE_MAX = 480;            // one smoothed score a second, the last eight minutes of an opening
   const HINT_NUDGE_MS = 30000;      // this long under the lowest line with a hint untaken, and it is offered
+  const HOLD_NEAR = 0.85;           // this share of the lowest line, and the screen says to hold steady
+  const BUZZ_MS = 40;               // one pulse the first time an opening reaches the lowest line
 
   let root = null;        // the full-screen container, built once and reused
   let stream = null;      // the live camera tracks, so they can all be stopped
@@ -121,6 +123,13 @@
                 top: calc(62px + env(safe-area-inset-top, 0px)); z-index: 4;
                 padding: 8px 14px; border-radius: 999px; background: rgba(0,0,0,.6);
                 font-size: .9rem; white-space: nowrap; pointer-events: none; }
+    /* The hold: the same pill, a word as the score nears the lowest line and
+       another once it is there and the timer is running. Under the button
+       row and the hint offer, which a player near the line may have up too. */
+    #lenshold { position: absolute; left: 50%; transform: translateX(-50%);
+                top: calc(112px + env(safe-area-inset-top, 0px)); z-index: 4;
+                padding: 8px 14px; border-radius: 999px; background: rgba(0,0,0,.6);
+                font-size: .9rem; white-space: nowrap; pointer-events: none; }
     #lensnudge { position: absolute; right: 12px; top: calc(66px + env(safe-area-inset-top, 0px));
                  z-index: 4; border: none;
                  padding: 8px 12px; border-radius: 999px; background: rgba(0,0,0,.6);
@@ -156,6 +165,7 @@
       <button id="lenshintbtn" aria-label="Hint" hidden>?</button>
       <button id="lensnudge" hidden>Try the hint?</button>
       <div id="lensturn" hidden></div>
+      <div id="lenshold" hidden></div>
       <div id="lensmsg" hidden></div>
       <div id="lensfoot" hidden><div id="lensclue" hidden></div><div id="lensdist" hidden></div></div>
       <button id="lenswash" data-strong hidden>Complete!</button>`;
@@ -201,6 +211,7 @@
     q("#lensmsg").hidden = true;
     q("#lensnudge").hidden = true;
     q("#lensturn").hidden = true;
+    q("#lenshold").hidden = true;
     q("#lenswash").hidden = true;
     // The hint is offered once the player has spent half a minute not at
     // the lowest line, to a player who has not taken it. Nobody took it on
@@ -330,6 +341,7 @@
       const turn = q("#lensturn");
       turn.textContent = wide ? "Turn the phone sideways" : "Turn the phone upright";
       turn.hidden = square || sideways === wide;
+      if (!turn.hidden) q("#lenshold").hidden = true;
     } else {
       place = null;
       q("#lensturn").hidden = true;
@@ -524,6 +536,7 @@
       openedAt: Date.now(), t0: performance.now(), evals: 0,
       peak: 0, peakOn: 0, peakOff: 0, peakSmooth: 0,
       aboveMs: 0, lastAt: null, trace: [], traceSecs: 0, w: 0, h: 0,
+      buzzed: false,
     };
     paintBar();
     match.timer = setInterval(matchTick, MATCH_EVERY_MS);
@@ -565,6 +578,15 @@
     // good alignment passes about a second after the first evaluation.
     match.smooth = match.smooth == null ? best.score
                  : MATCH_ALPHA * best.score + (1 - MATCH_ALPHA) * match.smooth;
+    // One pulse the first time the score reaches the lowest line, so a
+    // player looking at the scene rather than the bar knows to stop moving.
+    // Once per opening: the walks show the score crossing the line and
+    // falling back several times before a pass, and a buzz at each would be
+    // a nag. Android vibrates; iPhone has no such API and gets the pill.
+    if (!match.buzzed && match.smooth >= match.lines[match.lines.length - 1][0]) {
+      match.buzzed = true;
+      try { if (navigator.vibrate) navigator.vibrate(BUZZ_MS); } catch (err) {}
+    }
 
     const now = performance.now();
     match.pass = passRule(match.pass, match.smooth, now, match.lines);
@@ -883,6 +905,22 @@
     const s = match && match.smooth != null ? match.smooth : 0;
     const full = match ? match.lines[0][0] : BAR_FULL;
     q("#matchfill").style.width = (Math.min(1, s / full) * 100) + "%";
+    paintHold(s);
+  }
+  // A word under the bar as the smoothed score nears the lowest line, and
+  // another once it is there and the line's timer is running. On the walks
+  // so far the score crossed the line and fell back several times before a
+  // pass — the phone is moved just as it gets there — and the bar alone
+  // did not say to stop. Not while a turn is asked for: holding still the
+  // wrong way round is not the advice.
+  function paintHold(s) {
+    const hold = q("#lenshold");
+    if (!match || match.pass.passed || !q("#lensturn").hidden) { hold.hidden = true; return; }
+    const lowest = match.lines[match.lines.length - 1][0];
+    if (s >= lowest) hold.textContent = "Hold it there…";
+    else if (s >= HOLD_NEAR * lowest - 1e-9) hold.textContent = "Nearly… hold steady";
+    else { hold.hidden = true; return; }
+    hold.hidden = false;
   }
 
   // For the tests: paint the bar as if the smoothed score were v, and stop
@@ -920,14 +958,15 @@
      predicts the attainable score; it is not that score. */
   const ASSESS_KEEP = 0.12;
   const ASSESS_SPECK = 12;
+  let assessCanvas = null;   // one scratch canvas: the capture page calls this a few times a second
   function assess(src) {
     const sw = src.naturalWidth || src.videoWidth || src.width;
     const sh = src.naturalHeight || src.videoHeight || src.height;
     if (!(sw > 0 && sh > 0)) return null;
     const k = WORK_PX / Math.max(sw, sh);
     const w = Math.max(8, Math.round(sw * k)), h = Math.max(8, Math.round(sh * k));
-    const c = document.createElement("canvas");
-    const E = edgeMapOn(c, src, w, h);
+    if (!assessCanvas) assessCanvas = document.createElement("canvas");
+    const E = edgeMapOn(assessCanvas, src, w, h);
     const n = w * h;
     // The strongest share of the interior, strictly above the quantile.
     const inner = [];
@@ -978,8 +1017,10 @@
     const interior = Math.max(1, (w - 4) * (h - 4));
     const inkedFrac = inked / interior;
     const r3 = (v) => Math.round(v * 1000) / 1000;
+    // The shape is handed back with the numbers, for the capture page to
+    // show: it is roughly the stencil the build will cut from this frame.
     return { score: r3(score), on: r3(on), off: r3(off), inked: Math.round(inkedFrac * 10000) / 10000,
-             sparse: inkedFrac < 0.53 * ASSESS_KEEP, frame: w + "x" + h };
+             sparse: inkedFrac < 0.53 * ASSESS_KEEP, frame: w + "x" + h, mask: shape, w, h };
   }
 
   // For the tests: the masks this layout builds, the scorer's own arrays.

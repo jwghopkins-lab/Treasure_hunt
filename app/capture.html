@@ -52,8 +52,10 @@
          font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
          display: flex; flex-direction: column; align-items: center; }
   /* One column, the height of the screen: the two boxes, the camera taking
-     whatever is left, the shutter and the count. Nothing scrolls, and nothing
-     on the page is a word but the two placeholders. */
+     whatever is left, the shutter, the count and the fix line. Nothing
+     scrolls, and nothing on the page is a word but the two placeholders and
+     the fix line under the count, which says whether the next shot will
+     carry a location; the rest is numbers, and the words are in the flash. */
   .screen { width: 100%; max-width: 560px; display: flex; flex-direction: column;
             height: 100dvh; padding: 8px 0 calc(12px + env(safe-area-inset-bottom)); }
   [hidden] { display: none !important; }
@@ -71,8 +73,29 @@
   #feed { position: absolute; inset: 0; width: 100%; height: 100%;
           object-fit: contain; background: #000; }
 
+  /* The live reading: the scorer's own verdict on the frame as it stands, a
+     few times a second — a bar across the top of the view, the number in the
+     corner, coloured by the band the number is in. Literal colours, like the
+     ground they sit on: this is the camera's black, in both themes. */
+  #gauge { position: absolute; left: 0; right: 0; top: 0; height: 8px; z-index: 2;
+           background: rgba(255,255,255,.18); }
+  #gaugefill { height: 100%; width: 0; background: #C8322B;
+               transition: width .2s linear, background-color .2s linear; }
+  #gaugefill.warn { background: #D99A2B; }
+  #gaugefill.good { background: #3FBF7F; }
+  #gaugenum { position: absolute; right: 10px; top: 16px; z-index: 2; padding: 5px 10px;
+              border-radius: 999px; background: rgba(0,0,0,.55); color: #fff;
+              font-size: .9rem; font-variant-numeric: tabular-nums; }
+  /* The stencil the shot would give, roughly: white lines, in the flash
+     above its words, for as long as the flash is up, whether the shot was
+     taken or not. In the flash rather than under it: the flash is a sheet
+     over the whole screen, and the eye is on it. */
+  #preview { height: 46vh; width: auto; max-width: 84vw; object-fit: contain;
+             background: rgba(0,0,0,.35); border-radius: 8px; }
   .controls { display: flex; flex-direction: column; align-items: center; gap: 6px;
               padding: 12px 12px 0; }
+  /* The fix the next shot will carry, or the fact that there is none. */
+  #fix { font-size: .85rem; color: var(--ink-soft); min-height: 1.2em; line-height: 1.2; }
   /* A round shutter, a ring with a disc in it, so it needs no word. */
   #shutter { width: 74px; height: 74px; border-radius: 50%; border: 4px solid var(--ink);
              background: var(--panel); cursor: pointer; position: relative; flex: none;
@@ -89,7 +112,8 @@
      Visibility goes with the opacity so a message that has faded is gone from
      the page, not merely see-through. */
   #flash { position: fixed; inset: 0; z-index: 9; pointer-events: none;
-           display: flex; align-items: center; justify-content: center; text-align: center;
+           display: flex; flex-direction: column; gap: 16px;
+           align-items: center; justify-content: center; text-align: center;
            padding: 24px; font-size: 1.05rem; line-height: 1.45; font-weight: 600;
            overflow-wrap: anywhere; color: var(--accent-ink);
            visibility: hidden; opacity: 0;
@@ -108,13 +132,18 @@
     <input id="clue" type="text" placeholder="clue" maxlength="200" autocomplete="off"
            enterkeyhint="done">
   </div>
-  <div id="stage"><video id="feed" autoplay playsinline muted></video></div>
+  <div id="stage">
+    <video id="feed" autoplay playsinline muted></video>
+    <div id="gauge" hidden><div id="gaugefill"></div></div>
+    <div id="gaugenum" hidden></div>
+  </div>
   <div class="controls">
     <button id="shutter" type="button" aria-label="Shutter"></button>
     <div id="count">0</div>
+    <div id="fix">no location</div>
   </div>
 </div>
-<div id="flash"></div>
+<div id="flash"><canvas id="preview" hidden></canvas><div id="flashmsg"></div></div>
 <!-- SUPABASE GOES HERE -->
 <script src="lens.js"></script>
 <script>
@@ -154,22 +183,37 @@ document.addEventListener("click", (ev) => {
 /* ---- the fix ----
    One watchPosition for as long as the page is open, cleared on pagehide
    because a watch left running is a battery spent. The last fix whose
-   accuracy is a number is what travels with the photograph; the page never
-   shows it. The session decides later whether it was good enough. */
+   accuracy is a number is what travels with the photograph; the line under
+   the count says what it is, and names one the build will ignore as poor.
+   The build decides, with the same limit. */
 let fixWatch = null;
 let lastFix = null;      // { lat, lon, accuracy } or null before the first usable fix
 function startFixWatch() {
+  paintFix();
   if (fixWatch !== null || !navigator.geolocation) return;
   fixWatch = navigator.geolocation.watchPosition(
     (pos) => {
       const c = pos.coords;
       if (Number.isFinite(c.accuracy)) {
         lastFix = { lat: c.latitude, lon: c.longitude, accuracy: c.accuracy };
+        paintFix();
       }
     },
-    () => {},
+    () => { paintFix(); },
     { enableHighAccuracy: true });
 }
+// The line under the count: what the next shot will carry. Six of the
+// thirteen photographs of one walk went up with no fix at all, from a phone
+// that had none to give, and nobody knew until the map had holes in it. A
+// fix worse than the build's limit is named as poor: the build ignores it,
+// so the stencil would have no marker either way.
+const ACC_USELESS_M = 75;                   // from_captures.py's limit, repeated
+function fixText() {
+  if (!lastFix) return "no location";
+  const m = Math.round(lastFix.accuracy);
+  return lastFix.accuracy <= ACC_USELESS_M ? "\u00b1" + m + " m" : "poor fix (\u00b1" + m + " m)";
+}
+function paintFix() { $("fix").textContent = fixText(); }
 function stopFixWatch() {
   if (fixWatch !== null && navigator.geolocation) navigator.geolocation.clearWatch(fixWatch);
   fixWatch = null;
@@ -220,14 +264,18 @@ function flash(level, msg) {
   const kind = level === true ? "good" : level === false ? "bad" : level;
   const f = $("flash");
   clearTimeout(flash._t);
-  f.textContent = kind === "good" ? "" : msg;
+  $("flashmsg").textContent = msg || "";
   f.className = "show " + kind;
-  const hold = kind === "good" ? 600 : (msg && msg.length > 60 ? 6500 : 3000);
+  // Long enough to read: a sentence of advice needs longer than a status,
+  // and a status with a preview above it stays as long as the preview.
+  let hold = kind === "good" ? 600 : (msg && msg.length > 60 ? 6500 : 3000);
+  if (!$("preview").hidden) hold = Math.max(hold, PREVIEW_MS);
+  if (kind === "good" && msg && msg.length > 12) hold = Math.max(hold, 3000);
   flash._t = setTimeout(() => {
     f.className = "";
     // The words go once the fade has finished, so a message that has faded is
-    // not on the page any more.
-    flash._t = setTimeout(() => { f.textContent = ""; }, 500);
+    // not on the page any more, and the preview with them.
+    flash._t = setTimeout(() => { $("flashmsg").textContent = ""; $("preview").hidden = true; }, 500);
   }, hold);
 }
 
@@ -237,12 +285,72 @@ function flash(level, msg) {
    ring beside them, the score at the true alignment. Over the twenty-five
    photographs of three hunts that number predicts the attainable score the
    build measures to about 0.05, and the build refuses a stencil under 0.35.
-   So under 0.36 the shot is refused here, with what to change; under 0.46
-   it goes up with a warning that the build may still leave it out; and
-   above that it is simply taken. The number travels with the row, so the
-   two judgements can be compared on every hunt that follows. */
-const JUDGE_BLOCK = 0.36;
-const JUDGE_GOOD = 0.46;
+   The build's number is not quite this one: the build cuts at 800 px on the
+   long side and judges on the worse of two working frames, 320 and 240 px,
+   while this is the frame at 320. Over the thirty-eight photographs of five
+   hunts the build's attainable score on that worse frame is about
+   1.3 × this number − 0.2, to 0.045 either way. So, in this page's numbers:
+   under 0.42 (the build's floor of 0.35) the shot is refused here, with
+   what to change; under 0.54 (the build's 0.5) it goes up with a warning
+   that it may be left out or play badly — on the walks so far every stencil
+   the build measured at 0.5 or more was matched by every player who tried
+   it, and those it measured between 0.40 and 0.47 by three players in
+   eight; and from 0.54 it is simply taken. The number travels with the row,
+   so the two judgements can be compared on every hunt that follows.
+
+   The same number is read off the live view a few times a second and shown,
+   so the frame can be moved until it is green before the shutter is
+   pressed: nearer, or with plainer ground behind the subject. */
+const JUDGE_BLOCK = 0.42;
+const JUDGE_GOOD = 0.54;
+const GAUGE_FULL = 0.65;                    // the bar is full here; green begins at JUDGE_GOOD
+const GAUGE_MS = 400;                       // between readings of the live view, at least
+const GAUGE_SHARE = 4;                      // a reading costs at most this share of the time: ¼
+const PREVIEW_MS = 2500;                    // the stencil preview stays at least this long
+function band(score) { return score < JUDGE_BLOCK ? "bad" : score < JUDGE_GOOD ? "warn" : "good"; }
+// One reading, then the next is booked for later: 400 ms on, or four times
+// what this one cost on a phone that is slower than that, so the loop never
+// takes more than a quarter of the main thread. Not while a shot is being
+// taken, and nothing at all while the page is hidden or the camera gone.
+let gaugeTimer = null;
+function readFrame() {
+  gaugeTimer = null;
+  const t0 = performance.now();
+  const v = $("feed");
+  if (busy || document.hidden || cameraGone() || !(v.videoWidth > 0)
+      || !window.Lens || !window.Lens.assess) { showGauge(null); }
+  else showGauge(window.Lens.assess(v));
+  const took = performance.now() - t0;
+  gaugeTimer = setTimeout(readFrame, Math.max(GAUGE_MS, GAUGE_SHARE * took));
+}
+function showGauge(j) {
+  $("gauge").hidden = !j;
+  $("gaugenum").hidden = !j;
+  if (!j) return;
+  const fill = $("gaugefill");
+  fill.style.width = (Math.min(1, j.score / GAUGE_FULL) * 100) + "%";
+  fill.className = band(j.score);
+  $("gaugenum").textContent = j.score.toFixed(2);
+}
+function startGauge() { if (gaugeTimer === null) gaugeTimer = setTimeout(readFrame, GAUGE_MS); }
+// The shape the verdict scored, white lines in the flash above its words:
+// roughly the stencil the build would cut from this shot, so what a player
+// will be shown can be seen before the next one is framed. It stays as
+// long as the flash does; flash() keeps the flash up at least PREVIEW_MS.
+function showPreview(j) {
+  const c = $("preview");
+  if (!j || !j.mask) { c.hidden = true; return; }
+  c.width = j.w; c.height = j.h;
+  const ctx = c.getContext("2d");
+  const img = ctx.createImageData(j.w, j.h);
+  for (let i = 0; i < j.w * j.h; i++) {
+    if (!j.mask[i]) continue;
+    img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = 255;
+    img.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  c.hidden = false;
+}
 function advice(j) {
   if (j.off >= 0.20) {
     return "too much going on beside the edges. Find plain background behind the subject "
@@ -356,8 +464,10 @@ async function shoot() {
     // Judged before it goes anywhere. A shot that cannot score is not taken,
     // and the flash says what to change; the count stays where it was.
     const judged = window.Lens && window.Lens.assess ? window.Lens.assess(shot.canvas) : null;
+    showPreview(judged);
+    const num = judged ? " " + judged.score.toFixed(2) : "";
     if (judged && judged.score < JUDGE_BLOCK) {
-      flash(false, "Not this one: " + advice(judged));
+      flash(false, "Not this one" + num + ": " + advice(judged));
       return;
     }
     if (SUPABASE) await send(slug, shot.blob, clue, judged);
@@ -365,10 +475,12 @@ async function shoot() {
     shots += 1;
     $("count").textContent = String(shots);
     $("clue").value = "";
+    const where = !lastFix ? " No location with it."
+                : lastFix.accuracy > ACC_USELESS_M ? " Its fix is poor, so no location with it." : "";
     if (judged && judged.score < JUDGE_GOOD) {
-      flash("warn", "Taken, but weak: " + advice(judged) + " The build may leave it out.");
+      flash("warn", "Taken, but weak" + num + ": " + advice(judged) + " The build may leave it out." + where);
     } else {
-      flash(true);
+      flash(true, "Saved" + num + "." + where);
     }
   } catch (err) {
     flash(false, err && err.message ? err.message : String(err));
@@ -396,6 +508,7 @@ async function shoot() {
   // while to settle and the first shot should have one.
   startCamera();
   startFixWatch();
+  startGauge();
   window.addEventListener("pagehide", stopFixWatch);
   // A page brought back from the back-forward cache gets no load; the watch it
   // gave up on pagehide comes back here.

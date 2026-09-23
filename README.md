@@ -189,11 +189,27 @@ standard lines until they are rebuilt.
 
 The capture page judges each photograph before it goes up, with the same
 arithmetic run on the photograph against itself (`Lens.assess`, mirrored by
-the audit's `assess()`), and refuses a shot that would fail the floor with a
-sentence on what to change; a marginal one goes up with a warning. Over the
-twenty-five photographs of three hunts the page's number predicts the
-build's to about 0.05. The page's verdict travels with the row as `judged`,
-so the two can be compared on every hunt that follows.
+the audit's `assess()`), on the frame at 320 px. The build's number is not
+quite that one: it cuts at 800 px on the long side and judges on the worse
+of its two working frames, and over the thirty-eight photographs of five
+hunts that attainable score is about 1.3 × the page's number − 0.2, to
+0.045 either way. So, in the page's numbers, it refuses a shot under 0.42
+(the build's floor of 0.35) with a sentence on what to change, and takes
+one under 0.54 (the build's 0.5) with a warning that it may be left out or
+play badly: on the walks so far every stencil the build measured at 0.5 or
+more was matched by every player who tried it, and those it measured
+between 0.40 and 0.47 by three players in eight. The same number is read
+off the live view a few times a second — at most a quarter of the time on
+a slow phone — and shown as a bar and a number over the view, red, amber
+or green, so the frame can be moved until it is green before the shutter
+is pressed. After the shutter the shape the number was scored on is shown
+in the flash above its words, white lines, roughly the stencil the build
+will cut, and the flash says the number. A line under the count says what
+fix the next shot will carry (`±9 m`), that it is poor (over 75 m, which
+the build ignores), or that there is none; a shot with no usable fix gets
+no marker on the map, and its flash says so. The page's verdict travels
+with the row as `judged`, so the two can be compared on every hunt that
+follows.
 
 Then run the tests, including the fake-camera pass for the new hunt:
 
@@ -208,8 +224,9 @@ Playwright, headless Chromium, a phone-sized viewport, a fake camera, a
 stubbed vibration and a stubbed Supabase, against the fixture hunts built
 into `tests/.site`. `tests/png2y4m.py` turns a photograph into the y4m file
 the fake camera plays, so a stencil can be tested against its own
-photograph. `Lens.fakeScore(v)` paints the bar as if the smoothed score were
-`v`; it feeds nothing else and is there for the tests.
+photograph. `Lens.fakeScore(v)` paints the bar, and the hold pill under it,
+as if the smoothed score were `v`; it feeds nothing else and is there for
+the tests.
 
 `audit.spec.js` is the one that keeps `pipeline/audit.py` honest. The audit
 decides whether a hunt is worth walking to, and it does that by writing
@@ -288,7 +305,7 @@ tuned on what players saw rather than on what the audit predicts: the audit
 says what a stencil can score against its own photograph, and this says what
 it did score against the room.
 
-## Two nudges
+## Three nudges
 
 The camera screen says "Turn the phone upright" (or sideways) when the phone
 is held the wrong way round for the stencil: held sideways, a portrait
@@ -296,6 +313,15 @@ stencil is letterboxed into a fraction of the frame and scored there, and a
 player spent two minutes on one like that. And after half a minute under the
 lowest line with the hint untaken, it offers the hint in a word under the
 button; a tap on the offer takes it, at the same cost.
+
+The third is the hold. On the walks so far the smoothed score crossed the
+lowest line and fell back several times before a pass, because a phone is
+moved just as it gets there, and the bar alone did not say to stop. So a
+pill under the bar says "Nearly… hold steady" from 85% of the lowest line
+and "Hold it there…" once the score is at it and the line's timer is
+running, and an Android phone buzzes once, the first time an opening
+reaches the line. The pass rule is unchanged: the lines and their holds are
+what they were.
 
 ## The hint
 
